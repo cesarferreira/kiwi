@@ -28,3 +28,6 @@ modifiers = ["command", "control", "option", "shift"]
 
 #[cfg(target_os = "macos")]
 pub mod macos;
+
+#[cfg(target_os = "macos")]
+pub(crate) mod reload;

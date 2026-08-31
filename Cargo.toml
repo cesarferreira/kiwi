@@ -27,6 +27,7 @@ toml = "1.1.4"
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10.1"
 core-graphics = "0.25.0"
+notify = "8.2.0"
 
 [profile.release]
 lto = "thin"
