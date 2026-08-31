@@ -1,0 +1,13 @@
+#[cfg(target_os = "macos")]
+mod cli;
+
+#[cfg(target_os = "macos")]
+fn main() -> anyhow::Result<()> {
+    cli::run()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn main() {
+    eprintln!("keyweave only supports macOS");
+    std::process::exit(1);
+}
