@@ -85,3 +85,39 @@ jobs:
         with:
           files: artifacts/*
           body: ${{ steps.git-cliff.outputs.content }}
+
+      - name: Compute checksums
+        run: |
+          cd artifacts
+          echo "ARM_SHA=$(sha256sum kiwi-aarch64-apple-darwin.tar.gz | cut -d' ' -f1)" >> $GITHUB_ENV
+          echo "INTEL_SHA=$(sha256sum kiwi-x86_64-apple-darwin.tar.gz | cut -d' ' -f1)" >> $GITHUB_ENV
+
+      - name: Checkout Homebrew tap
+        uses: actions/checkout@v7
+        with:
+          repository: cesarferreira/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Update formula
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          FORMULA=tap/Formula/kiwi.rb
+
+          sed -i "s|releases/download/v[^/]*/kiwi-|releases/download/$VERSION/kiwi-|g" $FORMULA
+          sed -i "s/sha256 \"[a-f0-9]\{64\}\"/sha256 \"PLACEHOLDER\"/g" $FORMULA
+
+          sed -i "0,/PLACEHOLDER/s/PLACEHOLDER/$ARM_SHA/" $FORMULA
+          sed -i "0,/PLACEHOLDER/s/PLACEHOLDER/$INTEL_SHA/" $FORMULA
+
+      - name: Commit and push tap
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/kiwi.rb
+          git commit -m "kiwi $VERSION"
+          git push

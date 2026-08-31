@@ -38,11 +38,23 @@ keyboard shortcuts.
 - No Karabiner-Elements or Raycast dependency
 
 <a id="install"></a>
-## Requirements
+## Install
+
+The shortest path on macOS:
+
+```sh
+brew install cesarferreira/tap/kiwi
+kiwi install
+```
+
+`kiwi install` signs the Homebrew-installed binary with your stable Apple
+code-signing identity, creates the LaunchAgent, and starts it. Run it again
+after each `brew upgrade kiwi`, because the new binary needs to be signed and
+the LaunchAgent needs to point at its new Homebrew Cellar path.
+
+### Requirements
 
 - macOS
-- Rust 1.85 or newer
-- `~/.cargo/bin` on your `PATH`
 - Accessibility permission for the installed `kiwi` binary
 - A stable Apple code-signing identity
 
@@ -57,7 +69,10 @@ security find-identity -p codesigning -v
 Accessibility permission is tied to the identity of the executable.
 
 <a id="quickstart"></a>
-## Quick start
+## Build from source
+
+To build from source instead, install Rust 1.85 or newer and ensure
+`~/.cargo/bin` is on your `PATH`, then run:
 
 ```sh
 git clone https://github.com/cesarferreira/kiwi.git
