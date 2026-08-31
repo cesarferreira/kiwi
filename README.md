@@ -399,7 +399,7 @@ command.
 | `kiwi install` | Validate, stably sign, install, and start the LaunchAgent |
 | `kiwi uninstall` | Stop and remove the LaunchAgent and owned HID mapping |
 | `kiwi restart` | Restart the installed LaunchAgent |
-| `kiwi status` | Show configuration and LaunchAgent status |
+| `kiwi status` | Print a concise LaunchAgent status summary |
 | `kiwi doctor` | Check config, signing, Accessibility, and LaunchAgent health |
 | `kiwi permissions` | Open macOS Accessibility settings |
 | `kiwi config-path` | Print the active config path |

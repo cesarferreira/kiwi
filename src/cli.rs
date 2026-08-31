@@ -69,7 +69,7 @@ pub fn run() -> Result<()> {
         Command::Install => install(&config_path),
         Command::Uninstall => uninstall(),
         Command::Restart => launchctl(&["kickstart", "-k", &service_target()]),
-        Command::Status => launchctl(&["print", &service_target()]),
+        Command::Status => status(),
         Command::Doctor => doctor(&config_path),
         Command::Permissions => {
             let status = ProcessCommand::new("/usr/bin/open")
@@ -192,7 +192,7 @@ fn doctor(config_path: &Path) -> Result<()> {
         println!("[fail] binary is ad-hoc signed; run `kiwi install`");
     }
     match query_launch_agent_state()? {
-        LaunchAgentState::Running => println!("[ok] LaunchAgent is running"),
+        LaunchAgentState::Running { .. } => println!("[ok] LaunchAgent is running"),
         LaunchAgentState::NotRunning => {
             healthy = false;
             println!(
@@ -219,8 +219,13 @@ fn doctor(config_path: &Path) -> Result<()> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum LaunchAgentState {
     Missing,
-    Running,
+    Running { pid: Option<u32> },
     NotRunning,
+}
+
+fn status() -> Result<()> {
+    println!("{}", status_line(query_launch_agent_state()?));
+    Ok(())
 }
 
 fn query_launch_agent_state() -> Result<LaunchAgentState> {
@@ -242,9 +247,21 @@ fn query_launch_agent_state() -> Result<LaunchAgentState> {
 
 fn launch_agent_state(output: &str) -> LaunchAgentState {
     if output.lines().any(|line| line.trim() == "state = running") {
-        LaunchAgentState::Running
+        let pid = output
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("pid = ")?.parse::<u32>().ok());
+        LaunchAgentState::Running { pid }
     } else {
         LaunchAgentState::NotRunning
+    }
+}
+
+fn status_line(state: LaunchAgentState) -> String {
+    match state {
+        LaunchAgentState::Running { pid: Some(pid) } => format!("running (pid {pid})"),
+        LaunchAgentState::Running { pid: None } => "running".into(),
+        LaunchAgentState::NotRunning => "stopped — check ~/Library/Logs/kiwi.log".into(),
+        LaunchAgentState::Missing => "not installed — run `kiwi install`".into(),
     }
 }
 
@@ -479,14 +496,28 @@ mod tests {
     }
 
     #[test]
-    fn distinguishes_a_running_daemon_from_a_scheduled_restart() {
+    fn summarizes_a_running_daemon_with_its_pid() {
+        let state = super::launch_agent_state("state = running\npid = 85265");
+
+        assert_eq!(state, super::LaunchAgentState::Running { pid: Some(85265) });
+        assert_eq!(super::status_line(state), "running (pid 85265)");
+    }
+
+    #[test]
+    fn summarizes_an_installed_but_stopped_daemon() {
+        let state = super::launch_agent_state("state = spawn scheduled\nlast exit code = 1");
+
         assert_eq!(
-            super::launch_agent_state("state = running"),
-            super::LaunchAgentState::Running
+            super::status_line(state),
+            "stopped — check ~/Library/Logs/kiwi.log"
         );
+    }
+
+    #[test]
+    fn summarizes_a_missing_installation() {
         assert_eq!(
-            super::launch_agent_state("state = spawn scheduled\nlast exit code = 1"),
-            super::LaunchAgentState::NotRunning
+            super::status_line(super::LaunchAgentState::Missing),
+            "not installed — run `kiwi install`"
         );
     }
 
