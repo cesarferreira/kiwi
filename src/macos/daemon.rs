@@ -33,6 +33,7 @@ use crate::{
 use super::{key_to_keycode, keycode_to_key, modifier_for_keycode};
 
 const SYNTHETIC_EVENT_TAG: i64 = 0x4b_45_59_57_45_41_56_45;
+const CAPS_TO_F18_MAPPING: &str = r#"{"UserKeyMapping":[{"HIDKeyboardModifierMappingSrc":0x700000039,"HIDKeyboardModifierMappingDst":0x70000006D}]}"#;
 
 #[link(name = "ApplicationServices", kind = "framework")]
 unsafe extern "C" {
@@ -54,6 +55,11 @@ pub fn run_event_tap(config: CompiledConfig) -> Result<()> {
         bail!(
             "Accessibility permission is required; add keyweave in System Settings > Privacy & Security > Accessibility"
         );
+    }
+
+    let remap_caps = config.hyper.key.as_str() == "caps_lock";
+    if remap_caps {
+        apply_caps_to_f18()?;
     }
 
     let engine = Arc::new(Mutex::new(Engine::new(config)));
@@ -95,14 +101,15 @@ pub fn run_event_tap(config: CompiledConfig) -> Result<()> {
                 return CallbackResult::Keep;
             }
 
-            let Some(input) = input_from_event(event_type, event, &callback_tracker) else {
+            let Some(input) = input_from_event(event_type, event, &callback_tracker, remap_caps)
+            else {
                 return CallbackResult::Keep;
             };
             let decision = match callback_engine.lock() {
                 Ok(mut engine) => engine.handle(input),
                 Err(_) => return CallbackResult::Keep,
             };
-            apply_decision(decision, event, &action_sender)
+            apply_decision(decision, event, &action_sender, remap_caps)
         },
     )
     .map_err(|()| {
@@ -134,38 +141,63 @@ fn input_from_event(
     event_type: CGEventType,
     event: &CGEvent,
     tracker: &Mutex<ModifierTracker>,
+    remap_caps: bool,
 ) -> Option<Input> {
     let keycode = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u16;
     if matches!(event_type, CGEventType::FlagsChanged) {
-        return match tracker.lock().ok()?.toggle(keycode)? {
-            TrackedFlag::Modifier(modifier, kind) => Some(Input::Modifier { modifier, kind }),
-            TrackedFlag::Hyper(kind) => Some(Input::Key {
-                key: keycode_to_key(KeyCode::CAPS_LOCK)?,
-                kind,
-                repeat: false,
-            }),
-        };
+        let TrackedFlag::Modifier(modifier, kind) = tracker.lock().ok()?.toggle(keycode)?;
+        return Some(Input::Modifier { modifier, kind });
     }
 
+    keyboard_input(
+        event_type,
+        keycode,
+        event.get_integer_value_field(EventField::KEYBOARD_EVENT_AUTOREPEAT) != 0,
+        remap_caps,
+    )
+}
+
+fn keyboard_input(
+    event_type: CGEventType,
+    keycode: u16,
+    repeat: bool,
+    remap_caps: bool,
+) -> Option<Input> {
     let kind = match event_type {
         CGEventType::KeyDown => EventKind::Down,
         CGEventType::KeyUp => EventKind::Up,
         _ => return None,
     };
-    Some(Input::Key {
-        key: keycode_to_key(keycode)?,
-        kind,
-        repeat: event.get_integer_value_field(EventField::KEYBOARD_EVENT_AUTOREPEAT) != 0,
-    })
+    let key = if remap_caps && keycode == KeyCode::F18 {
+        keycode_to_key(KeyCode::CAPS_LOCK)?
+    } else {
+        keycode_to_key(keycode)?
+    };
+    Some(Input::Key { key, kind, repeat })
 }
 
 fn apply_decision(
     decision: Decision,
     event: &CGEvent,
     actions: &mpsc::Sender<Action>,
+    strip_caps_flag: bool,
 ) -> CallbackResult {
     match decision {
-        Decision::Pass => CallbackResult::Keep,
+        Decision::Pass => {
+            if strip_caps_flag
+                && event
+                    .get_flags()
+                    .contains(CGEventFlags::CGEventFlagAlphaShift)
+            {
+                let replacement = event.clone();
+                let mut flags = event.get_flags();
+                flags.remove(CGEventFlags::CGEventFlagAlphaShift);
+                replacement.set_flags(flags);
+                CallbackResult::Replace(replacement)
+            } else {
+                CallbackResult::Keep
+            }
+        }
         Decision::Suppress => CallbackResult::Drop,
         Decision::Trigger(action) => {
             if let Err(error) = actions.send(action) {
@@ -181,6 +213,86 @@ fn apply_decision(
             replacement.set_flags(flags);
             CallbackResult::Replace(replacement)
         }
+    }
+}
+
+fn apply_caps_to_f18() -> Result<()> {
+    match current_mapping_state()? {
+        MappingState::Owned => return Ok(()),
+        MappingState::Foreign => {
+            bail!(
+                "another hidutil UserKeyMapping is already active; keyweave will not overwrite it"
+            );
+        }
+        MappingState::Empty => {}
+    }
+    let output = Command::new("/usr/bin/hidutil")
+        .args(["property", "--set", CAPS_TO_F18_MAPPING])
+        .output()
+        .context("could not run hidutil")?;
+    if !output.status.success() {
+        bail!(
+            "could not remap Caps Lock: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(())
+}
+
+pub fn remove_caps_remap() -> Result<()> {
+    if current_mapping_state()? != MappingState::Owned {
+        return Ok(());
+    }
+    let output = Command::new("/usr/bin/hidutil")
+        .args(["property", "--set", r#"{"UserKeyMapping":[]}"#])
+        .output()
+        .context("could not run hidutil")?;
+    if !output.status.success() {
+        bail!(
+            "could not restore Caps Lock: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(())
+}
+
+fn current_mapping_state() -> Result<MappingState> {
+    let output = Command::new("/usr/bin/hidutil")
+        .args(["property", "--get", "UserKeyMapping"])
+        .output()
+        .context("could not query hidutil")?;
+    if !output.status.success() {
+        bail!(
+            "could not query key mappings: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(mapping_state(&String::from_utf8_lossy(&output.stdout)))
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MappingState {
+    Empty,
+    Owned,
+    Foreign,
+}
+
+fn mapping_state(output: &str) -> MappingState {
+    let output = output.trim();
+    let compact: String = output
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    if output.is_empty() || output == "(null)" || compact == "()" {
+        return MappingState::Empty;
+    }
+    let one_mapping = output.matches("HIDKeyboardModifierMappingSrc").count() == 1;
+    let our_source = output.contains("30064771129") || output.contains("0x700000039");
+    let our_destination = output.contains("30064771181") || output.contains("0x70000006D");
+    if one_mapping && our_source && our_destination {
+        MappingState::Owned
+    } else {
+        MappingState::Foreign
     }
 }
 
@@ -253,7 +365,6 @@ fn flags_for(modifiers: &[Modifier]) -> CGEventFlags {
 #[derive(Debug, Eq, PartialEq)]
 enum TrackedFlag {
     Modifier(Modifier, EventKind),
-    Hyper(EventKind),
 }
 
 #[derive(Default)]
@@ -269,20 +380,24 @@ impl ModifierTracker {
             self.pressed.insert(keycode);
             EventKind::Down
         };
-        if keycode == KeyCode::CAPS_LOCK {
-            Some(TrackedFlag::Hyper(kind))
-        } else {
-            modifier_for_keycode(keycode).map(|modifier| TrackedFlag::Modifier(modifier, kind))
-        }
+        modifier_for_keycode(keycode).map(|modifier| TrackedFlag::Modifier(modifier, kind))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use core_graphics::event::KeyCode;
+    use core_graphics::event::{CGEventType, KeyCode};
 
-    use super::{ModifierTracker, TrackedFlag};
-    use crate::{engine::EventKind, key::Modifier};
+    use super::{
+        CAPS_TO_F18_MAPPING, MappingState, ModifierTracker, TrackedFlag, keyboard_input,
+        mapping_state,
+    };
+    use crate::{
+        DEFAULT_CONFIG,
+        config::{Action, Config},
+        engine::{Decision, Engine, EventKind},
+        key::Modifier,
+    };
 
     #[test]
     fn flags_changed_events_toggle_physical_modifier_sides() {
@@ -299,16 +414,62 @@ mod tests {
     }
 
     #[test]
-    fn caps_lock_flags_changed_events_become_momentary_key_events() {
-        let mut tracker = ModifierTracker::default();
+    fn remapped_caps_has_a_real_keyup_and_does_not_latch_hyper() {
+        let config = Config::from_toml(DEFAULT_CONFIG)
+            .unwrap()
+            .compile()
+            .unwrap();
+        let mut engine = Engine::new(config);
 
         assert_eq!(
-            tracker.toggle(KeyCode::CAPS_LOCK),
-            Some(TrackedFlag::Hyper(EventKind::Down))
+            engine.handle(keyboard_input(CGEventType::KeyDown, KeyCode::F18, false, true).unwrap()),
+            Decision::Suppress
         );
         assert_eq!(
-            tracker.toggle(KeyCode::CAPS_LOCK),
-            Some(TrackedFlag::Hyper(EventKind::Up))
+            engine.handle(keyboard_input(CGEventType::KeyUp, KeyCode::F18, false, true).unwrap()),
+            Decision::Trigger(Action::SendKeys("escape".parse().unwrap()))
+        );
+        assert_eq!(
+            engine.handle(
+                keyboard_input(CGEventType::KeyDown, KeyCode::ANSI_S, false, true).unwrap()
+            ),
+            Decision::Pass
+        );
+    }
+
+    #[test]
+    fn uses_apples_caps_to_f18_hid_usage_mapping() {
+        assert_eq!(
+            CAPS_TO_F18_MAPPING,
+            r#"{"UserKeyMapping":[{"HIDKeyboardModifierMappingSrc":0x700000039,"HIDKeyboardModifierMappingDst":0x70000006D}]}"#
+        );
+    }
+
+    #[test]
+    fn distinguishes_our_hid_mapping_from_foreign_mappings() {
+        assert_eq!(mapping_state("(null)"), MappingState::Empty);
+        assert_eq!(mapping_state("(\n)"), MappingState::Empty);
+        assert_eq!(
+            mapping_state(
+                r#"(
+                  {
+                    HIDKeyboardModifierMappingDst = 30064771181;
+                    HIDKeyboardModifierMappingSrc = 30064771129;
+                  }
+                )"#
+            ),
+            MappingState::Owned
+        );
+        assert_eq!(
+            mapping_state(
+                r#"(
+                  {
+                    HIDKeyboardModifierMappingDst = 30064771130;
+                    HIDKeyboardModifierMappingSrc = 30064771129;
+                  }
+                )"#
+            ),
+            MappingState::Foreign
         );
     }
 }

@@ -16,10 +16,12 @@ build-release:
 # Install debug binary to ~/.cargo/bin
 install:
 	CARGO_INCREMENTAL=0 cargo install --path . --locked --bins --debug --force
+	keyweave install
 
 # Install release binary to ~/.cargo/bin
 install-release:
 	CARGO_INCREMENTAL=0 cargo install --path . --locked --bins --force
+	keyweave install
 
 # Clean build artifacts
 clean:
