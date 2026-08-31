@@ -1,6 +1,6 @@
 use std::{
     fs::{self, OpenOptions},
-    io::Write,
+    io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
     process::Command as ProcessCommand,
 };
@@ -40,6 +40,10 @@ enum Command {
     Run,
     /// Install and start the per-user LaunchAgent
     Install,
+    /// Start an installed LaunchAgent
+    Start,
+    /// Stop the LaunchAgent without uninstalling it
+    Stop,
     /// Stop and remove the per-user LaunchAgent
     Uninstall,
     /// Restart an installed LaunchAgent
@@ -67,6 +71,8 @@ pub fn run() -> Result<()> {
         }
         Command::Run => run_event_tap(load_config(&config_path)?),
         Command::Install => install(&config_path),
+        Command::Start => start(),
+        Command::Stop => stop(),
         Command::Uninstall => uninstall(),
         Command::Restart => launchctl(&["kickstart", "-k", &service_target()]),
         Command::Status => status(),
@@ -146,7 +152,7 @@ fn install(config_path: &Path) -> Result<()> {
     unload_if_loaded(&LaunchctlManager, &service_target())?;
     launchctl(&[
         "bootstrap",
-        &format!("gui/{}", unsafe { libc::getuid() }),
+        &service_domain(),
         &plist_path.to_string_lossy(),
     ])?;
     println!("installed {LABEL}");
@@ -156,6 +162,24 @@ fn install(config_path: &Path) -> Result<()> {
             binary.display()
         );
     }
+    Ok(())
+}
+
+fn start() -> Result<()> {
+    let plist_path = launch_agent_path()?;
+    start_service(
+        &LaunchctlManager,
+        &service_target(),
+        &service_domain(),
+        &plist_path,
+    )?;
+    println!("started {LABEL}");
+    Ok(())
+}
+
+fn stop() -> Result<()> {
+    stop_service(&LaunchctlManager, &service_target(), remove_caps_remap)?;
+    println!("stopped {LABEL}");
     Ok(())
 }
 
@@ -224,7 +248,15 @@ enum LaunchAgentState {
 }
 
 fn status() -> Result<()> {
-    println!("{}", status_line(query_launch_agent_state()?));
+    let state = query_launch_agent_state()?;
+    let elapsed = match state {
+        LaunchAgentState::Running { pid: Some(pid) } => process_elapsed_time(pid),
+        _ => None,
+    };
+    println!(
+        "{}",
+        status_line(state, elapsed.as_deref(), io::stdout().is_terminal())
+    );
     Ok(())
 }
 
@@ -234,7 +266,7 @@ fn query_launch_agent_state() -> Result<LaunchAgentState> {
         .output()
         .context("could not query LaunchAgent state")?;
     if output.status.code() == Some(113) {
-        return Ok(LaunchAgentState::Missing);
+        return Ok(unloaded_launch_agent_state(launch_agent_path()?.exists()));
     }
     if !output.status.success() {
         bail!(
@@ -256,10 +288,73 @@ fn launch_agent_state(output: &str) -> LaunchAgentState {
     }
 }
 
-fn status_line(state: LaunchAgentState) -> String {
+fn unloaded_launch_agent_state(plist_exists: bool) -> LaunchAgentState {
+    if plist_exists {
+        LaunchAgentState::NotRunning
+    } else {
+        LaunchAgentState::Missing
+    }
+}
+
+fn process_elapsed_time(pid: u32) -> Option<String> {
+    let output = ProcessCommand::new("/bin/ps")
+        .args(["-p", &pid.to_string(), "-o", "etime="])
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| format_elapsed_time(&String::from_utf8_lossy(&output.stdout)))
+        .flatten()
+}
+
+fn format_elapsed_time(elapsed: &str) -> Option<String> {
+    let elapsed = elapsed.trim();
+    let (days, clock) = match elapsed.split_once('-') {
+        Some((days, clock)) => (days.parse::<u64>().ok()?, clock),
+        None => (0, elapsed),
+    };
+    let parts = clock
+        .split(':')
+        .map(|part| part.parse::<u64>().ok())
+        .collect::<Option<Vec<_>>>()?;
+    let (hours, minutes, seconds) = match parts.as_slice() {
+        [minutes, seconds] => (0, *minutes, *seconds),
+        [hours, minutes, seconds] => (*hours, *minutes, *seconds),
+        _ => return None,
+    };
+    Some(if days > 0 {
+        if hours > 0 {
+            format!("{days}d {hours}h")
+        } else {
+            format!("{days}d")
+        }
+    } else if hours > 0 {
+        if minutes > 0 {
+            format!("{hours}h {minutes}m")
+        } else {
+            format!("{hours}h")
+        }
+    } else if minutes > 0 {
+        format!("{minutes}m {seconds}s")
+    } else {
+        format!("{seconds}s")
+    })
+}
+
+fn status_line(state: LaunchAgentState, elapsed: Option<&str>, color: bool) -> String {
     match state {
-        LaunchAgentState::Running { pid: Some(pid) } => format!("running (pid {pid})"),
-        LaunchAgentState::Running { pid: None } => "running".into(),
+        LaunchAgentState::Running { .. } => {
+            let running = if color {
+                "\u{1b}[32mrunning\u{1b}[0m"
+            } else {
+                "running"
+            };
+            elapsed.map_or_else(
+                || running.into(),
+                |elapsed| format!("{running} for {elapsed}"),
+            )
+        }
         LaunchAgentState::NotRunning => "stopped — check ~/Library/Logs/kiwi.log".into(),
         LaunchAgentState::Missing => "not installed — run `kiwi install`".into(),
     }
@@ -366,7 +461,9 @@ fn select_signing_identity(output: &str) -> Option<String> {
 
 trait ServiceManager {
     fn is_loaded(&self, target: &str) -> Result<bool>;
+    fn bootstrap(&self, domain: &str, plist: &Path) -> Result<()>;
     fn bootout(&self, target: &str) -> Result<()>;
+    fn kickstart(&self, target: &str) -> Result<()>;
 }
 
 struct LaunchctlManager;
@@ -389,9 +486,42 @@ impl ServiceManager for LaunchctlManager {
         )
     }
 
+    fn bootstrap(&self, domain: &str, plist: &Path) -> Result<()> {
+        launchctl(&["bootstrap", domain, &plist.to_string_lossy()])
+    }
+
     fn bootout(&self, target: &str) -> Result<()> {
         launchctl(&["bootout", target])
     }
+
+    fn kickstart(&self, target: &str) -> Result<()> {
+        launchctl(&["kickstart", target])
+    }
+}
+
+fn start_service(
+    manager: &impl ServiceManager,
+    target: &str,
+    domain: &str,
+    plist: &Path,
+) -> Result<()> {
+    if !plist.exists() {
+        bail!("Kiwi is not installed; run `kiwi install`");
+    }
+    if manager.is_loaded(target)? {
+        manager.kickstart(target)
+    } else {
+        manager.bootstrap(domain, plist)
+    }
+}
+
+fn stop_service(
+    manager: &impl ServiceManager,
+    target: &str,
+    remove_mapping: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    unload_if_loaded(manager, target)?;
+    remove_mapping()
 }
 
 fn unload_if_loaded(manager: &impl ServiceManager, target: &str) -> Result<()> {
@@ -402,7 +532,11 @@ fn unload_if_loaded(manager: &impl ServiceManager, target: &str) -> Result<()> {
 }
 
 fn service_target() -> String {
-    format!("gui/{}/{LABEL}", unsafe { libc::getuid() })
+    format!("{}/{LABEL}", service_domain())
+}
+
+fn service_domain() -> String {
+    format!("gui/{}", unsafe { libc::getuid() })
 }
 
 fn default_config_path() -> Result<PathBuf> {
@@ -425,7 +559,7 @@ fn log_path() -> Result<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::Cell;
+    use std::{cell::Cell, path::Path};
 
     use anyhow::Result;
 
@@ -433,7 +567,9 @@ mod tests {
 
     struct FakeServiceManager {
         loaded: bool,
+        bootstrap_calls: Cell<usize>,
         bootout_calls: Cell<usize>,
+        kickstart_calls: Cell<usize>,
     }
 
     impl ServiceManager for FakeServiceManager {
@@ -441,8 +577,18 @@ mod tests {
             Ok(self.loaded)
         }
 
+        fn bootstrap(&self, _domain: &str, _plist: &Path) -> Result<()> {
+            self.bootstrap_calls.set(self.bootstrap_calls.get() + 1);
+            Ok(())
+        }
+
         fn bootout(&self, _target: &str) -> Result<()> {
             self.bootout_calls.set(self.bootout_calls.get() + 1);
+            Ok(())
+        }
+
+        fn kickstart(&self, _target: &str) -> Result<()> {
+            self.kickstart_calls.set(self.kickstart_calls.get() + 1);
             Ok(())
         }
     }
@@ -451,7 +597,9 @@ mod tests {
     fn first_install_does_not_bootout_a_missing_service() {
         let manager = FakeServiceManager {
             loaded: false,
+            bootstrap_calls: Cell::new(0),
             bootout_calls: Cell::new(0),
+            kickstart_calls: Cell::new(0),
         };
 
         unload_if_loaded(&manager, "gui/501/example").unwrap();
@@ -463,12 +611,86 @@ mod tests {
     fn reinstall_boots_out_the_loaded_service_once() {
         let manager = FakeServiceManager {
             loaded: true,
+            bootstrap_calls: Cell::new(0),
             bootout_calls: Cell::new(0),
+            kickstart_calls: Cell::new(0),
         };
 
         unload_if_loaded(&manager, "gui/501/example").unwrap();
 
         assert_eq!(manager.bootout_calls.get(), 1);
+    }
+
+    #[test]
+    fn start_bootstraps_an_installed_unloaded_service() {
+        let manager = FakeServiceManager {
+            loaded: false,
+            bootstrap_calls: Cell::new(0),
+            bootout_calls: Cell::new(0),
+            kickstart_calls: Cell::new(0),
+        };
+        let plist =
+            std::env::temp_dir().join(format!("kiwi-start-test-{}.plist", std::process::id()));
+        std::fs::write(&plist, "test").unwrap();
+
+        super::start_service(&manager, "gui/501/example", "gui/501", &plist).unwrap();
+        std::fs::remove_file(plist).unwrap();
+
+        assert_eq!(manager.bootstrap_calls.get(), 1);
+        assert_eq!(manager.kickstart_calls.get(), 0);
+    }
+
+    #[test]
+    fn start_kickstarts_an_already_loaded_service() {
+        let manager = FakeServiceManager {
+            loaded: true,
+            bootstrap_calls: Cell::new(0),
+            bootout_calls: Cell::new(0),
+            kickstart_calls: Cell::new(0),
+        };
+        let plist = std::env::temp_dir().join(format!(
+            "kiwi-start-loaded-test-{}.plist",
+            std::process::id()
+        ));
+        std::fs::write(&plist, "test").unwrap();
+
+        super::start_service(&manager, "gui/501/example", "gui/501", &plist).unwrap();
+        std::fs::remove_file(plist).unwrap();
+
+        assert_eq!(manager.bootstrap_calls.get(), 0);
+        assert_eq!(manager.kickstart_calls.get(), 1);
+    }
+
+    #[test]
+    fn stop_unloads_the_service_and_restores_caps_lock() {
+        let manager = FakeServiceManager {
+            loaded: true,
+            bootstrap_calls: Cell::new(0),
+            bootout_calls: Cell::new(0),
+            kickstart_calls: Cell::new(0),
+        };
+        let caps_restored = Cell::new(false);
+
+        super::stop_service(&manager, "gui/501/example", || {
+            caps_restored.set(true);
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(manager.bootout_calls.get(), 1);
+        assert!(caps_restored.get());
+    }
+
+    #[test]
+    fn an_unloaded_service_is_stopped_when_its_plist_remains() {
+        assert_eq!(
+            super::unloaded_launch_agent_state(true),
+            super::LaunchAgentState::NotRunning
+        );
+        assert_eq!(
+            super::unloaded_launch_agent_state(false),
+            super::LaunchAgentState::Missing
+        );
     }
 
     #[test]
@@ -500,7 +722,14 @@ mod tests {
         let state = super::launch_agent_state("state = running\npid = 85265");
 
         assert_eq!(state, super::LaunchAgentState::Running { pid: Some(85265) });
-        assert_eq!(super::status_line(state), "running (pid 85265)");
+        assert_eq!(
+            super::status_line(state, Some("5m 57s"), false),
+            "running for 5m 57s"
+        );
+        assert_eq!(
+            super::status_line(state, Some("5m 57s"), true),
+            "\u{1b}[32mrunning\u{1b}[0m for 5m 57s"
+        );
     }
 
     #[test]
@@ -508,7 +737,7 @@ mod tests {
         let state = super::launch_agent_state("state = spawn scheduled\nlast exit code = 1");
 
         assert_eq!(
-            super::status_line(state),
+            super::status_line(state, None, false),
             "stopped — check ~/Library/Logs/kiwi.log"
         );
     }
@@ -516,8 +745,24 @@ mod tests {
     #[test]
     fn summarizes_a_missing_installation() {
         assert_eq!(
-            super::status_line(super::LaunchAgentState::Missing),
+            super::status_line(super::LaunchAgentState::Missing, None, false),
             "not installed — run `kiwi install`"
+        );
+    }
+
+    #[test]
+    fn formats_process_elapsed_time_compactly() {
+        assert_eq!(
+            super::format_elapsed_time("05:57").as_deref(),
+            Some("5m 57s")
+        );
+        assert_eq!(
+            super::format_elapsed_time("02:05:07").as_deref(),
+            Some("2h 5m")
+        );
+        assert_eq!(
+            super::format_elapsed_time("3-06:02:01").as_deref(),
+            Some("3d 6h")
         );
     }
 

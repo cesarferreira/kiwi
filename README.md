@@ -397,6 +397,8 @@ command.
 | `kiwi validate` | Parse and validate the selected config |
 | `kiwi run` | Run the daemon in the foreground |
 | `kiwi install` | Validate, stably sign, install, and start the LaunchAgent |
+| `kiwi start` | Start an installed LaunchAgent |
+| `kiwi stop` | Stop the LaunchAgent and restore Caps Lock without uninstalling |
 | `kiwi uninstall` | Stop and remove the LaunchAgent and owned HID mapping |
 | `kiwi restart` | Restart the installed LaunchAgent |
 | `kiwi status` | Print a concise LaunchAgent status summary |

@@ -63,3 +63,16 @@ fn help_uses_the_kiwi_command_name() {
             .contains("Usage: kiwi")
     );
 }
+
+#[test]
+fn help_exposes_start_and_stop_commands() {
+    let output = Command::new(env!("CARGO_BIN_EXE_kiwi"))
+        .arg("--help")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    assert!(output.status.success());
+    assert!(stdout.contains("  start"));
+    assert!(stdout.contains("  stop"));
+}
