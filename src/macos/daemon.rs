@@ -1,6 +1,6 @@
 use std::{
-    collections::BTreeSet,
     ffi::c_void,
+    path::Path,
     process::Command,
     sync::{
         Arc, Mutex,
@@ -19,20 +19,24 @@ use core_foundation::{
 use core_graphics::{
     event::{
         CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions,
-        CGEventTapPlacement, CGEventType, CallbackResult, EventField, KeyCode,
+        CGEventTapPlacement, CGEventType, CallbackResult, EventField,
     },
     event_source::{CGEventSource, CGEventSourceStateID},
 };
 
 use crate::{
     config::{Action, CompiledConfig},
-    engine::{Decision, Engine, EventKind, Input},
+    engine::Decision,
     key::{Chord, Modifier},
+    reload::watch_config,
 };
 
-use super::{key_to_keycode, keycode_to_key, modifier_for_keycode};
+use super::{
+    events::{EventDecoder, SYNTHETIC_EVENT_TAG},
+    key_to_keycode,
+    runtime::{ReloadNotice, ReloadingEngine},
+};
 
-const SYNTHETIC_EVENT_TAG: i64 = 0x4b_45_59_57_45_41_56_45;
 const CAPS_TO_F18_MAPPING: &str = r#"{"UserKeyMapping":[{"HIDKeyboardModifierMappingSrc":0x700000039,"HIDKeyboardModifierMappingDst":0x70000006D}]}"#;
 
 #[link(name = "ApplicationServices", kind = "framework")]
@@ -50,20 +54,21 @@ pub fn accessibility_is_trusted() -> bool {
     unsafe { AXIsProcessTrusted() }
 }
 
-pub fn run_event_tap(config: CompiledConfig) -> Result<()> {
+pub fn run_event_tap(config_path: &Path, config: CompiledConfig) -> Result<()> {
     if !accessibility_is_trusted() {
         bail!(
             "Accessibility permission is required; add kiwi in System Settings > Privacy & Security > Accessibility"
         );
     }
 
+    let config_receiver = watch_config(config_path)?;
     let remap_caps = config.hyper.key.as_str() == "caps_lock";
     if remap_caps {
         apply_caps_to_f18()?;
     }
 
-    let engine = Arc::new(Mutex::new(Engine::new(config)));
-    let modifier_tracker = Arc::new(Mutex::new(ModifierTracker::default()));
+    let engine = Arc::new(Mutex::new(ReloadingEngine::new(config, config_receiver)));
+    let decoder = Arc::new(EventDecoder::new(remap_caps));
     let tap_port = Arc::new(AtomicPtr::<c_void>::new(std::ptr::null_mut()));
     let (action_sender, action_receiver) = mpsc::channel();
     thread::Builder::new()
@@ -72,8 +77,9 @@ pub fn run_event_tap(config: CompiledConfig) -> Result<()> {
         .context("could not start action worker")?;
 
     let callback_engine = Arc::clone(&engine);
-    let callback_tracker = Arc::clone(&modifier_tracker);
+    let callback_decoder = Arc::clone(&decoder);
     let callback_port = Arc::clone(&tap_port);
+    let callback_config_path = config_path.to_path_buf();
     let event_tap = CGEventTap::new(
         CGEventTapLocation::HID,
         CGEventTapPlacement::HeadInsertEventTap,
@@ -101,15 +107,15 @@ pub fn run_event_tap(config: CompiledConfig) -> Result<()> {
                 return CallbackResult::Keep;
             }
 
-            let Some(input) = input_from_event(event_type, event, &callback_tracker, remap_caps)
-            else {
+            let Some(input) = callback_decoder.input(event_type, event) else {
                 return CallbackResult::Keep;
             };
-            let decision = match callback_engine.lock() {
+            let handled = match callback_engine.lock() {
                 Ok(mut engine) => engine.handle(input),
                 Err(_) => return CallbackResult::Keep,
             };
-            apply_decision(decision, event, &action_sender, remap_caps)
+            report_reload_notices(&callback_config_path, &handled.notices);
+            apply_decision(handled.decision, event, &action_sender, remap_caps)
         },
     )
     .map_err(|()| {
@@ -137,43 +143,18 @@ pub fn run_event_tap(config: CompiledConfig) -> Result<()> {
     Ok(())
 }
 
-fn input_from_event(
-    event_type: CGEventType,
-    event: &CGEvent,
-    tracker: &Mutex<ModifierTracker>,
-    remap_caps: bool,
-) -> Option<Input> {
-    let keycode = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u16;
-    if matches!(event_type, CGEventType::FlagsChanged) {
-        let TrackedFlag::Modifier(modifier, kind) = tracker.lock().ok()?.toggle(keycode)?;
-        return Some(Input::Modifier { modifier, kind });
+pub(crate) fn report_reload_notices(config_path: &Path, notices: &[ReloadNotice]) {
+    for notice in notices {
+        match notice {
+            ReloadNotice::Applied(binding_count) => eprintln!(
+                "reloaded {} ({binding_count} enabled bindings)",
+                config_path.display()
+            ),
+            ReloadNotice::HyperKeyChanged => {
+                eprintln!("reload skipped: [hyper].key changed; run `kiwi restart` to apply it")
+            }
+        }
     }
-
-    keyboard_input(
-        event_type,
-        keycode,
-        event.get_integer_value_field(EventField::KEYBOARD_EVENT_AUTOREPEAT) != 0,
-        remap_caps,
-    )
-}
-
-fn keyboard_input(
-    event_type: CGEventType,
-    keycode: u16,
-    repeat: bool,
-    remap_caps: bool,
-) -> Option<Input> {
-    let kind = match event_type {
-        CGEventType::KeyDown => EventKind::Down,
-        CGEventType::KeyUp => EventKind::Up,
-        _ => return None,
-    };
-    let key = if remap_caps && keycode == KeyCode::F18 {
-        keycode_to_key(KeyCode::CAPS_LOCK)?
-    } else {
-        keycode_to_key(keycode)?
-    };
-    Some(Input::Key { key, kind, repeat })
 }
 
 fn apply_decision(
@@ -360,80 +341,9 @@ fn flags_for(modifiers: &[Modifier]) -> CGEventFlags {
         })
 }
 
-#[derive(Debug, Eq, PartialEq)]
-enum TrackedFlag {
-    Modifier(Modifier, EventKind),
-}
-
-#[derive(Default)]
-struct ModifierTracker {
-    pressed: BTreeSet<u16>,
-}
-
-impl ModifierTracker {
-    fn toggle(&mut self, keycode: u16) -> Option<TrackedFlag> {
-        let kind = if self.pressed.remove(&keycode) {
-            EventKind::Up
-        } else {
-            self.pressed.insert(keycode);
-            EventKind::Down
-        };
-        modifier_for_keycode(keycode).map(|modifier| TrackedFlag::Modifier(modifier, kind))
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use core_graphics::event::{CGEventType, KeyCode};
-
-    use super::{
-        CAPS_TO_F18_MAPPING, MappingState, ModifierTracker, TrackedFlag, keyboard_input,
-        mapping_state,
-    };
-    use crate::{
-        DEFAULT_CONFIG,
-        config::{Action, Config},
-        engine::{Decision, Engine, EventKind},
-        key::Modifier,
-    };
-
-    #[test]
-    fn flags_changed_events_toggle_physical_modifier_sides() {
-        let mut tracker = ModifierTracker::default();
-
-        assert_eq!(
-            tracker.toggle(KeyCode::OPTION),
-            Some(TrackedFlag::Modifier(Modifier::LeftOption, EventKind::Down))
-        );
-        assert_eq!(
-            tracker.toggle(KeyCode::OPTION),
-            Some(TrackedFlag::Modifier(Modifier::LeftOption, EventKind::Up))
-        );
-    }
-
-    #[test]
-    fn remapped_caps_has_a_real_keyup_and_does_not_latch_hyper() {
-        let config = Config::from_toml(DEFAULT_CONFIG)
-            .unwrap()
-            .compile()
-            .unwrap();
-        let mut engine = Engine::new(config);
-
-        assert_eq!(
-            engine.handle(keyboard_input(CGEventType::KeyDown, KeyCode::F18, false, true).unwrap()),
-            Decision::Suppress
-        );
-        assert_eq!(
-            engine.handle(keyboard_input(CGEventType::KeyUp, KeyCode::F18, false, true).unwrap()),
-            Decision::Trigger(Action::SendKeys("escape".parse().unwrap()))
-        );
-        assert_eq!(
-            engine.handle(
-                keyboard_input(CGEventType::KeyDown, KeyCode::ANSI_S, false, true).unwrap()
-            ),
-            Decision::Pass
-        );
-    }
+    use super::{CAPS_TO_F18_MAPPING, MappingState, mapping_state};
 
     #[test]
     fn uses_apples_caps_to_f18_hid_usage_mapping() {

@@ -1,4 +1,5 @@
 mod daemon;
+mod events;
 mod keycodes;
 mod launchd;
 mod runtime;

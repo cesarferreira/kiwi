@@ -73,7 +73,7 @@ pub fn run() -> Result<()> {
             Ok(())
         }
         Command::List => list_shortcuts(&config_path),
-        Command::Run => run_event_tap(load_config(&config_path)?),
+        Command::Run => run_event_tap(&config_path, load_config(&config_path)?),
         Command::Install => install(&config_path),
         Command::Start => start(),
         Command::Stop => stop(),
