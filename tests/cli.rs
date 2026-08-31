@@ -125,3 +125,15 @@ fn help_exposes_the_list_command() {
     assert!(output.status.success());
     assert!(stdout.contains("  list"));
 }
+
+#[test]
+fn help_exposes_the_listen_command() {
+    let output = Command::new(env!("CARGO_BIN_EXE_kiwi"))
+        .arg("--help")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    assert!(output.status.success());
+    assert!(stdout.contains("  listen"));
+}

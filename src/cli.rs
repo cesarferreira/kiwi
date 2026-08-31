@@ -12,7 +12,8 @@ use kiwi_keymapper::{
     DEFAULT_CONFIG,
     config::{Action, Config},
     macos::{
-        LABEL, accessibility_is_trusted, launch_agent_plist, remove_caps_remap, run_event_tap,
+        LABEL, accessibility_is_trusted, launch_agent_plist, listen_event_tap, remove_caps_remap,
+        run_event_tap,
     },
 };
 
@@ -41,6 +42,8 @@ enum Command {
     List,
     /// Run the keyboard event daemon in the foreground
     Run,
+    /// Show shortcuts as they are pressed without running actions
+    Listen,
     /// Install and start the per-user LaunchAgent
     Install,
     /// Start an installed LaunchAgent
@@ -74,6 +77,11 @@ pub fn run() -> Result<()> {
         }
         Command::List => list_shortcuts(&config_path),
         Command::Run => run_event_tap(&config_path, load_config(&config_path)?),
+        Command::Listen => listen_event_tap(
+            &config_path,
+            load_config(&config_path)?,
+            io::stdout().is_terminal(),
+        ),
         Command::Install => install(&config_path),
         Command::Start => start(),
         Command::Stop => stop(),
