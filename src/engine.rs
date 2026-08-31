@@ -73,6 +73,36 @@ impl Engine {
         }
     }
 
+    pub fn is_idle(&self) -> bool {
+        self.held_modifiers.is_empty()
+            && !self.hyper_active
+            && self.consumed_keys.is_empty()
+            && self.rewritten_keys.is_empty()
+    }
+
+    pub fn hyper_key(&self) -> &Key {
+        &self.config.hyper.key
+    }
+
+    pub fn replace_config(&mut self, config: CompiledConfig) {
+        self.config = config;
+    }
+
+    pub fn preview_chord(&self, input: &Input) -> Option<Chord> {
+        let Input::Key { key, kind, repeat } = input else {
+            return None;
+        };
+        if *kind != EventKind::Down || *repeat || key == self.hyper_key() {
+            return None;
+        }
+
+        let mut modifiers: Vec<_> = self.held_modifiers.iter().copied().collect();
+        if self.hyper_active {
+            modifiers.push(Modifier::Hyper);
+        }
+        Some(Chord::new(modifiers, key.clone()))
+    }
+
     fn handle_key(&mut self, key: Key, kind: EventKind, repeat: bool) -> Decision {
         if key == self.config.hyper.key {
             return self.handle_hyper_key(kind);

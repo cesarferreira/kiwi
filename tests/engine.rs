@@ -143,3 +143,84 @@ fn pressing_another_key_prevents_escape_even_if_it_is_unmapped() {
 
     assert_eq!(engine.handle(release("caps_lock")), Decision::Suppress);
 }
+
+#[test]
+fn engine_is_idle_only_between_complete_input_sequences() {
+    let mut engine = engine();
+
+    assert!(engine.is_idle());
+    engine.handle(press("caps_lock"));
+    assert!(!engine.is_idle());
+    engine.handle(press("t"));
+    engine.handle(release("t"));
+    engine.handle(release("caps_lock"));
+    assert!(engine.is_idle());
+}
+
+#[test]
+fn replacing_config_changes_the_next_binding() {
+    let replacement = Config::from_toml(
+        r#"
+        [bindings]
+        "hyper+b" = { app = "Replacement" }
+        "#,
+    )
+    .unwrap()
+    .compile()
+    .unwrap();
+    let mut engine = engine();
+
+    engine.replace_config(replacement);
+    engine.handle(press("caps_lock"));
+    assert_eq!(
+        engine.handle(press("b")),
+        Decision::Trigger(Action::LaunchApp("Replacement".into()))
+    );
+}
+
+#[test]
+fn preview_chord_uses_held_physical_modifiers_and_hyper() {
+    let mut engine = engine();
+    engine.handle(Input::Modifier {
+        modifier: Modifier::LeftOption,
+        kind: EventKind::Down,
+    });
+
+    assert_eq!(
+        engine.preview_chord(&press("h")).unwrap().to_string(),
+        "left_option+h"
+    );
+
+    engine.handle(Input::Modifier {
+        modifier: Modifier::LeftOption,
+        kind: EventKind::Up,
+    });
+    engine.handle(press("caps_lock"));
+    assert_eq!(
+        engine.preview_chord(&press("h")).unwrap().to_string(),
+        "hyper+h"
+    );
+}
+
+#[test]
+fn preview_chord_ignores_non_observable_inputs() {
+    let engine = engine();
+
+    assert_eq!(engine.preview_chord(&release("h")), None);
+    assert_eq!(
+        engine.preview_chord(&Input::Key {
+            key: key("h"),
+            kind: EventKind::Down,
+            repeat: true,
+        }),
+        None
+    );
+    assert_eq!(engine.preview_chord(&press("caps_lock")), None);
+    assert_eq!(
+        engine.preview_chord(&Input::Modifier {
+            modifier: Modifier::LeftOption,
+            kind: EventKind::Down,
+        }),
+        None
+    );
+}
