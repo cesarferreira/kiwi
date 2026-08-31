@@ -2,9 +2,9 @@
 
 use std::path::Path;
 
-use keyweave::{
+use kiwi_keymapper::{
     key::Modifier,
-    macos::{key_to_keycode, keycode_to_key, launch_agent_plist, modifier_for_keycode},
+    macos::{LABEL, key_to_keycode, keycode_to_key, launch_agent_plist, modifier_for_keycode},
 };
 
 #[test]
@@ -25,12 +25,13 @@ fn preserves_the_side_of_physical_modifiers() {
 #[test]
 fn launch_agent_uses_explicit_paths_and_escapes_xml() {
     let plist = launch_agent_plist(
-        Path::new("/Applications/Key & Weave/keyweave"),
-        Path::new("/Users/cesar/.config/keyweave/config.toml"),
-        Path::new("/Users/cesar/Library/Logs/keyweave.log"),
+        Path::new("/Applications/Kiwi & Friends/kiwi"),
+        Path::new("/Users/cesar/.config/kiwi/config.toml"),
+        Path::new("/Users/cesar/Library/Logs/kiwi.log"),
     );
 
-    assert!(plist.contains("/Applications/Key &amp; Weave/keyweave"));
+    assert_eq!(LABEL, "io.github.cesarferreira.kiwi");
+    assert!(plist.contains("/Applications/Kiwi &amp; Friends/kiwi"));
     assert!(plist.contains("<string>--config</string>"));
     assert!(plist.contains("<string>run</string>"));
     assert!(plist.contains("<key>RunAtLoad</key>\n  <true/>"));

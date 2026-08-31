@@ -8,6 +8,6 @@ fn main() -> anyhow::Result<()> {
 
 #[cfg(not(target_os = "macos"))]
 fn main() {
-    eprintln!("keyweave only supports macOS");
+    eprintln!("kiwi only supports macOS");
     std::process::exit(1);
 }

@@ -16,12 +16,12 @@ build-release:
 # Install debug binary to ~/.cargo/bin
 install:
 	CARGO_INCREMENTAL=0 cargo install --path . --locked --bins --debug --force
-	keyweave install
+	kiwi install
 
 # Install release binary to ~/.cargo/bin
 install-release:
 	CARGO_INCREMENTAL=0 cargo install --path . --locked --bins --force
-	keyweave install
+	kiwi install
 
 # Clean build artifacts
 clean:
@@ -51,8 +51,8 @@ run:
 
 # Quick demo
 demo: install
-	@echo "=== keyweave demo ==="
-	keyweave --help
+	@echo "=== kiwi demo ==="
+	kiwi --help
 
 # Bump version, regenerate CHANGELOG.md, tag, publish, and push (requires cargo-release + git-cliff)
 release:

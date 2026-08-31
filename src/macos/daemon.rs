@@ -53,7 +53,7 @@ pub fn accessibility_is_trusted() -> bool {
 pub fn run_event_tap(config: CompiledConfig) -> Result<()> {
     if !accessibility_is_trusted() {
         bail!(
-            "Accessibility permission is required; add keyweave in System Settings > Privacy & Security > Accessibility"
+            "Accessibility permission is required; add kiwi in System Settings > Privacy & Security > Accessibility"
         );
     }
 
@@ -67,7 +67,7 @@ pub fn run_event_tap(config: CompiledConfig) -> Result<()> {
     let tap_port = Arc::new(AtomicPtr::<c_void>::new(std::ptr::null_mut()));
     let (action_sender, action_receiver) = mpsc::channel();
     thread::Builder::new()
-        .name("keyweave-actions".into())
+        .name("kiwi-actions".into())
         .spawn(move || action_worker(action_receiver))
         .context("could not start action worker")?;
 
@@ -117,7 +117,7 @@ pub fn run_event_tap(config: CompiledConfig) -> Result<()> {
             "could not create the keyboard event tap; verify Accessibility permission for {}",
             std::env::current_exe()
                 .map(|path| path.display().to_string())
-                .unwrap_or_else(|_| "keyweave".into())
+                .unwrap_or_else(|_| "kiwi".into())
         )
     })?;
 
@@ -132,7 +132,7 @@ pub fn run_event_tap(config: CompiledConfig) -> Result<()> {
         .map_err(|()| anyhow::anyhow!("could not create event-tap run loop source"))?;
     run_loop.add_source(&source, unsafe { kCFRunLoopCommonModes });
     event_tap.enable();
-    println!("keyweave is running");
+    println!("kiwi is running");
     CFRunLoop::run_current();
     Ok(())
 }
@@ -201,7 +201,7 @@ fn apply_decision(
         Decision::Suppress => CallbackResult::Drop,
         Decision::Trigger(action) => {
             if let Err(error) = actions.send(action) {
-                eprintln!("keyweave action worker stopped: {error}");
+                eprintln!("kiwi action worker stopped: {error}");
             }
             CallbackResult::Drop
         }
@@ -220,9 +220,7 @@ fn apply_caps_to_f18() -> Result<()> {
     match current_mapping_state()? {
         MappingState::Owned => return Ok(()),
         MappingState::Foreign => {
-            bail!(
-                "another hidutil UserKeyMapping is already active; keyweave will not overwrite it"
-            );
+            bail!("another hidutil UserKeyMapping is already active; kiwi will not overwrite it");
         }
         MappingState::Empty => {}
     }
@@ -299,7 +297,7 @@ fn mapping_state(output: &str) -> MappingState {
 fn action_worker(receiver: mpsc::Receiver<Action>) {
     for action in receiver {
         if let Err(error) = execute_action(&action) {
-            eprintln!("keyweave action failed: {error:#}");
+            eprintln!("kiwi action failed: {error:#}");
         }
     }
 }

@@ -1,6 +1,6 @@
 use std::path::Path;
 
-pub const LABEL: &str = "io.github.cesarferreira.keyweave";
+pub const LABEL: &str = "io.github.cesarferreira.kiwi";
 
 pub fn launch_agent_plist(binary: &Path, config: &Path, log: &Path) -> String {
     let binary = escape_xml(&binary.to_string_lossy());

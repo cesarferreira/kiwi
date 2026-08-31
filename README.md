@@ -1,5 +1,5 @@
 <div align="center">
-  <h1>keyweave</h1>
+  <h1>kiwi 🥝</h1>
 
   <p><strong>Run portable macOS key mappings</strong></p>
 
@@ -7,7 +7,7 @@
     <img alt="License" src="https://img.shields.io/badge/license-MIT-green">
     <img alt="Rust" src="https://img.shields.io/badge/rust-1.85%2B-orange">
     <img alt="Edition" src="https://img.shields.io/badge/edition-2024-blue">
-    <a href="https://crates.io/crates/keyweave"><img alt="crates.io" src="https://img.shields.io/crates/v/keyweave.svg"></a>
+    <a href="https://crates.io/crates/kiwi-keymapper"><img alt="crates.io" src="https://img.shields.io/crates/v/kiwi-keymapper.svg"></a>
   </p>
 
   <p>
@@ -22,7 +22,7 @@
 
 ---
 
-`keyweave` replaces the common Karabiner-Elements + launcher combination with
+`kiwi` replaces the common Karabiner-Elements + launcher combination with
 one small native daemon. It can turn Caps Lock into Hyper when held and Escape
 when tapped, launch applications, open URLs, run shell commands, and emit other
 keyboard shortcuts.
@@ -41,7 +41,7 @@ keyboard shortcuts.
 - macOS
 - Rust 1.85 or newer
 - `~/.cargo/bin` on your `PATH`
-- Accessibility permission for the installed `keyweave` binary
+- Accessibility permission for the installed `kiwi` binary
 - A stable Apple code-signing identity
 
 Check that macOS can see a signing identity:
@@ -50,7 +50,7 @@ Check that macOS can see a signing identity:
 security find-identity -p codesigning -v
 ```
 
-`keyweave install` prefers a **Developer ID Application** identity, then an
+`kiwi install` prefers a **Developer ID Application** identity, then an
 **Apple Development** identity. A stable signature matters because macOS
 Accessibility permission is tied to the identity of the executable.
 
@@ -58,26 +58,26 @@ Accessibility permission is tied to the identity of the executable.
 ## Quick start
 
 ```sh
-git clone https://github.com/cesarferreira/keyweave.git
-cd keyweave
+git clone https://github.com/cesarferreira/kiwi.git
+cd kiwi
 make install-release
 ```
 
 Open Accessibility settings:
 
 ```sh
-keyweave permissions
+kiwi permissions
 ```
 
-Add `~/.cargo/bin/keyweave` in **System Settings → Privacy & Security →
+Add `~/.cargo/bin/kiwi` in **System Settings → Privacy & Security →
 Accessibility**, enable it, then run:
 
 ```sh
-keyweave restart
-keyweave doctor
+kiwi restart
+kiwi doctor
 ```
 
-The default configuration is `~/.config/keyweave/config.toml`. A minimal
+The default configuration is `~/.config/kiwi/config.toml`. A minimal
 working configuration:
 
 ```toml
@@ -130,7 +130,7 @@ modifiers = ["command", "control", "option", "shift"]
 ```
 
 Unknown fields, invalid names, duplicate normalized chords, and bindings with
-more or fewer than one action are rejected by `keyweave validate`.
+more or fewer than one action are rejected by `kiwi validate`.
 
 ## Configuration reference
 
@@ -162,7 +162,7 @@ tap = "escape"
 modifiers = ["command", "option"]
 ```
 
-When `caps_lock` is the Hyper key, `keyweave` owns a macOS `hidutil` mapping
+When `caps_lock` is the Hyper key, `kiwi` owns a macOS `hidutil` mapping
 from Caps Lock to F18. F18 is therefore reserved and should not be configured
 as a separate shortcut.
 
@@ -196,7 +196,7 @@ links both work:
 ```
 
 The Raycast example only works if Raycast is installed and registered that URL
-scheme; `keyweave` itself does not depend on Raycast.
+scheme; `kiwi` itself does not depend on Raycast.
 
 #### `command`
 
@@ -369,21 +369,21 @@ Keep the canonical file in your dotfiles and symlink it into the default
 location:
 
 ```sh
-mkdir -p ~/.config/keyweave
-ln -s ~/dotfiles/keyweave/config.toml ~/.config/keyweave/config.toml
-keyweave restart
+mkdir -p ~/.config/kiwi
+ln -s ~/dotfiles/kiwi/config.toml ~/.config/kiwi/config.toml
+kiwi restart
 ```
 
 Alternatively, use a custom path:
 
 ```sh
-keyweave --config ~/dotfiles/keyweave/config.toml validate
-keyweave --config ~/dotfiles/keyweave/config.toml install
+kiwi --config ~/dotfiles/kiwi/config.toml validate
+kiwi --config ~/dotfiles/kiwi/config.toml install
 ```
 
 The LaunchAgent written by the second command remembers that custom path.
 Machine-specific app names, executable paths, and URL handlers still need to
-exist on each Mac. Run `keyweave doctor` after deploying.
+exist on each Mac. Run `kiwi doctor` after deploying.
 
 ## Commands
 
@@ -392,19 +392,19 @@ command.
 
 | Command | Purpose |
 |---|---|
-| `keyweave init` | Create the default config if it does not exist |
-| `keyweave init --force` | Replace the config with the generated default |
-| `keyweave validate` | Parse and validate the selected config |
-| `keyweave run` | Run the daemon in the foreground |
-| `keyweave install` | Validate, stably sign, install, and start the LaunchAgent |
-| `keyweave uninstall` | Stop and remove the LaunchAgent and owned HID mapping |
-| `keyweave restart` | Restart the installed LaunchAgent |
-| `keyweave status` | Show configuration and LaunchAgent status |
-| `keyweave doctor` | Check config, signing, Accessibility, and LaunchAgent health |
-| `keyweave permissions` | Open macOS Accessibility settings |
-| `keyweave config-path` | Print the active config path |
+| `kiwi init` | Create the default config if it does not exist |
+| `kiwi init --force` | Replace the config with the generated default |
+| `kiwi validate` | Parse and validate the selected config |
+| `kiwi run` | Run the daemon in the foreground |
+| `kiwi install` | Validate, stably sign, install, and start the LaunchAgent |
+| `kiwi uninstall` | Stop and remove the LaunchAgent and owned HID mapping |
+| `kiwi restart` | Restart the installed LaunchAgent |
+| `kiwi status` | Show configuration and LaunchAgent status |
+| `kiwi doctor` | Check config, signing, Accessibility, and LaunchAgent health |
+| `kiwi permissions` | Open macOS Accessibility settings |
+| `kiwi config-path` | Print the active config path |
 
-Use `keyweave run` while developing to keep logs in the terminal. Stop the
+Use `kiwi run` while developing to keep logs in the terminal. Stop the
 installed agent first if necessary so two instances do not process the same
 shortcut.
 
@@ -422,11 +422,11 @@ For a debug build:
 make install
 ```
 
-If you install directly with Cargo, finish by running `keyweave install`:
+If you install directly with Cargo, finish by running `kiwi install`:
 
 ```sh
 cargo install --path . --force
-keyweave install
+kiwi install
 ```
 
 `cargo install` produces an ad-hoc signature. The second command replaces it
@@ -434,7 +434,7 @@ with a stable signature and refreshes the LaunchAgent.
 
 ## How it works
 
-1. For the default Caps Lock setup, `keyweave` applies a narrowly scoped
+1. For the default Caps Lock setup, `kiwi` applies a narrowly scoped
    `hidutil` mapping from Caps Lock to F18.
 2. A macOS event tap observes keyboard events globally.
 3. Pressing the Hyper key holds the configured virtual modifiers. Releasing it
@@ -444,28 +444,28 @@ with a stable signature and refreshes the LaunchAgent.
 5. A per-user LaunchAgent starts the daemon at login and restarts it if needed.
 
 The LaunchAgent is stored at
-`~/Library/LaunchAgents/io.github.cesarferreira.keyweave.plist`.
+`~/Library/LaunchAgents/io.github.cesarferreira.kiwi.plist`.
 
 ## Troubleshooting
 
 ### Caps Lock acts like normal Caps Lock
 
 ```sh
-keyweave restart
-keyweave doctor
+kiwi restart
+kiwi doctor
 hidutil property --get UserKeyMapping
 ```
 
 For the default setup, `hidutil` should report a Caps Lock → F18 mapping. Its
 values are displayed as decimal HID usage codes. If `doctor` reports an
-Accessibility problem, remove any stale `keyweave` entry from Accessibility,
-add `~/.cargo/bin/keyweave` again, enable it, and restart.
+Accessibility problem, remove any stale `kiwi` entry from Accessibility,
+add `~/.cargo/bin/kiwi` again, enable it, and restart.
 
 ### `doctor` says the binary is ad-hoc signed
 
 ```sh
-keyweave install
-keyweave doctor
+kiwi install
+kiwi doctor
 ```
 
 Avoid finishing an update with only `cargo install`; it replaces the stably
@@ -474,8 +474,8 @@ signed executable.
 ### The LaunchAgent is not running
 
 ```sh
-keyweave install
-keyweave status
+kiwi install
+kiwi status
 ```
 
 `Boot-out failed: 3: No such process` is harmless during installation when no
@@ -507,15 +507,15 @@ do not create distinct shortcuts. Keep only one normalized form.
 The daemon reads the config when it starts:
 
 ```sh
-keyweave validate
-keyweave restart
+kiwi validate
+kiwi restart
 ```
 
 ### Another HID mapping is already installed
 
-`keyweave` refuses to overwrite a `UserKeyMapping` it does not own. Remove or
+`kiwi` refuses to overwrite a `UserKeyMapping` it does not own. Remove or
 disable the software that created the mapping, clear that mapping deliberately,
-then run `keyweave restart`.
+then run `kiwi restart`.
 
 ## Development
 

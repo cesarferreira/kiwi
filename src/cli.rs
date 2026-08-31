@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use keyweave::{
+use kiwi_keymapper::{
     DEFAULT_CONFIG,
     config::Config,
     macos::{
@@ -16,9 +16,9 @@ use keyweave::{
 };
 
 #[derive(Parser, Debug)]
-#[command(name = "keyweave", version, about = "Run portable macOS key mappings")]
+#[command(name = "kiwi", version, about = "Run portable macOS key mappings")]
 struct Cli {
-    /// Use a config file other than ~/.config/keyweave/config.toml
+    /// Use a config file other than ~/.config/kiwi/config.toml
     #[arg(long, global = true, value_name = "PATH")]
     config: Option<PathBuf>,
 
@@ -90,7 +90,7 @@ pub fn run() -> Result<()> {
     }
 }
 
-fn load_config(path: &Path) -> Result<keyweave::config::CompiledConfig> {
+fn load_config(path: &Path) -> Result<kiwi_keymapper::config::CompiledConfig> {
     Config::from_path(path)?.compile()
 }
 
@@ -135,7 +135,7 @@ fn install(config_path: &Path) -> Result<()> {
     if let Some(parent) = log_path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let binary = std::env::current_exe().context("could not locate the keyweave binary")?;
+    let binary = std::env::current_exe().context("could not locate the kiwi binary")?;
     let signature_changed = ensure_stable_signature(&binary)?;
     fs::write(
         &plist_path,
@@ -152,7 +152,7 @@ fn install(config_path: &Path) -> Result<()> {
     println!("installed {LABEL}");
     if signature_changed || !accessibility_is_trusted() {
         println!(
-            "next: run `keyweave permissions`, remove any old Keyweave entry, add {}, then run `keyweave restart`",
+            "next: run `kiwi permissions`, remove any old Kiwi entry, add {}, then run `kiwi restart`",
             binary.display()
         );
     }
@@ -184,19 +184,19 @@ fn doctor(config_path: &Path) -> Result<()> {
             println!("[fail] config: {error:#}");
         }
     }
-    let binary = std::env::current_exe().context("could not locate the keyweave binary")?;
+    let binary = std::env::current_exe().context("could not locate the kiwi binary")?;
     if is_stable_requirement(&code_requirement(&binary)?) {
         println!("[ok] stable code-signing identity");
     } else {
         healthy = false;
-        println!("[fail] binary is ad-hoc signed; run `keyweave install`");
+        println!("[fail] binary is ad-hoc signed; run `kiwi install`");
     }
     match query_launch_agent_state()? {
         LaunchAgentState::Running => println!("[ok] LaunchAgent is running"),
         LaunchAgentState::NotRunning => {
             healthy = false;
             println!(
-                "[fail] LaunchAgent is installed but not running; check ~/Library/Logs/keyweave.log"
+                "[fail] LaunchAgent is installed but not running; check ~/Library/Logs/kiwi.log"
             );
         }
         LaunchAgentState::Missing => {
@@ -286,7 +286,7 @@ fn ensure_stable_signature(binary: &Path) -> Result<bool> {
             &binary.to_string_lossy(),
         ])
         .output()
-        .context("could not sign keyweave")?;
+        .context("could not sign kiwi")?;
     if !output.status.success() {
         bail!(
             "codesign failed: {}",
@@ -296,7 +296,7 @@ fn ensure_stable_signature(binary: &Path) -> Result<bool> {
     if !is_stable_requirement(&code_requirement(binary)?) {
         bail!("codesign did not produce a stable designated requirement");
     }
-    println!("signed keyweave as `{identity}`");
+    println!("signed kiwi as `{identity}`");
     Ok(true)
 }
 
@@ -304,7 +304,7 @@ fn code_requirement(binary: &Path) -> Result<String> {
     let output = ProcessCommand::new("/usr/bin/codesign")
         .args(["-d", "-r-", &binary.to_string_lossy()])
         .output()
-        .context("could not inspect the keyweave signature")?;
+        .context("could not inspect the kiwi signature")?;
     if !output.status.success() {
         bail!(
             "codesign inspection failed: {}",
@@ -391,7 +391,7 @@ fn service_target() -> String {
 fn default_config_path() -> Result<PathBuf> {
     Ok(dirs::home_dir()
         .context("could not find the home directory")?
-        .join(".config/keyweave/config.toml"))
+        .join(".config/kiwi/config.toml"))
 }
 
 fn launch_agent_path() -> Result<PathBuf> {
@@ -403,7 +403,7 @@ fn launch_agent_path() -> Result<PathBuf> {
 fn log_path() -> Result<PathBuf> {
     Ok(dirs::home_dir()
         .context("could not find the home directory")?
-        .join("Library/Logs/keyweave.log"))
+        .join("Library/Logs/kiwi.log"))
 }
 
 #[cfg(test)]
@@ -474,7 +474,7 @@ mod tests {
             r#"# designated => cdhash H"04c3928ca06f59fba04ebde63db1318ccc11e45c""#
         ));
         assert!(super::is_stable_requirement(
-            r#"designated => identifier "io.github.cesarferreira.keyweave" and anchor apple generic"#
+            r#"designated => identifier "io.github.cesarferreira.kiwi" and anchor apple generic"#
         ));
     }
 
@@ -493,8 +493,8 @@ mod tests {
     #[test]
     fn reads_designated_requirement_from_codesign_stdout() {
         let output = super::combined_codesign_output(
-            b"designated => identifier \"io.github.cesarferreira.keyweave\" and anchor apple generic",
-            b"Executable=/tmp/keyweave",
+            b"designated => identifier \"io.github.cesarferreira.kiwi\" and anchor apple generic",
+            b"Executable=/tmp/kiwi",
         );
 
         assert!(super::is_stable_requirement(&output));

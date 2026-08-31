@@ -44,14 +44,14 @@ jobs:
       - name: Package
         run: |
           cd target/${{ matrix.target }}/release
-          tar czf ../../../keyweave-${{ matrix.target }}.tar.gz keyweave
+          tar czf ../../../kiwi-${{ matrix.target }}.tar.gz kiwi
           cd ../../..
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: keyweave-${{ matrix.target }}
-          path: keyweave-${{ matrix.target }}.*
+          name: kiwi-${{ matrix.target }}
+          path: kiwi-${{ matrix.target }}.*
 
   release:
     name: Release

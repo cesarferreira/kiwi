@@ -2,7 +2,7 @@ pub mod config;
 pub mod engine;
 pub mod key;
 
-pub const DEFAULT_CONFIG: &str = r#"# keyweave configuration
+pub const DEFAULT_CONFIG: &str = r#"# kiwi configuration
 # Chords use `+`; accepted aliases include cmd, ctrl, alt, and esc.
 
 [hyper]

@@ -1,4 +1,4 @@
-use keyweave::config::{Action, Config};
+use kiwi_keymapper::config::{Action, Config};
 
 const EXAMPLE: &str = r#"
 [hyper]

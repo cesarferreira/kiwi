@@ -1,15 +1,15 @@
 [package]
-name = "keyweave"
+name = "kiwi-keymapper"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Run portable macOS key mappings"
 license = "MIT"
 authors = ["Cesar Ferreira"]
-repository = "https://github.com/cesarferreira/keyweave"
+repository = "https://github.com/cesarferreira/kiwi"
 
 [[bin]]
-name = "keyweave"
+name = "kiwi"
 path = "src/main.rs"
 
 [dependencies]

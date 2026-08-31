@@ -1,4 +1,4 @@
-use keyweave::{
+use kiwi_keymapper::{
     config::{Action, Config},
     engine::{Decision, Engine, EventKind, Input},
     key::{Key, Modifier},

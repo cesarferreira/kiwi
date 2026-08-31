@@ -10,9 +10,9 @@ fn make_install_restores_signature_and_launch_agent_after_cargo_install() {
         assert!(output.status.success());
         let commands = String::from_utf8(output.stdout).unwrap();
         let cargo_install = commands.find("cargo install").unwrap();
-        let keyweave_install = commands.find("keyweave install").unwrap_or_else(|| {
+        let kiwi_install = commands.find("kiwi install").unwrap_or_else(|| {
             panic!("`make {target}` must restore the stable signature after Cargo replaces it")
         });
-        assert!(keyweave_install > cargo_install);
+        assert!(kiwi_install > cargo_install);
     }
 }
