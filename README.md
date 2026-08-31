@@ -1,13 +1,26 @@
 <div align="center">
+  <h1>keyweave</h1>
 
-# keyweave
+  <p><strong>Run portable macOS key mappings</strong></p>
 
-One portable TOML file for macOS keyboard remapping and global shortcuts.
+  <p>
+    <img alt="License" src="https://img.shields.io/badge/license-MIT-green">
+    <img alt="Rust" src="https://img.shields.io/badge/rust-1.85%2B-orange">
+    <img alt="Edition" src="https://img.shields.io/badge/edition-2024-blue">
+    <a href="https://crates.io/crates/keyweave"><img alt="crates.io" src="https://img.shields.io/crates/v/keyweave.svg"></a>
+  </p>
 
-[![CI](https://github.com/cesarferreira/keyweave/actions/workflows/ci.yml/badge.svg)](https://github.com/cesarferreira/keyweave/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+  <p>
+    <a href="#install">Install</a>
+    &nbsp;·&nbsp;
+    <a href="#quickstart">Quickstart</a>
+    &nbsp;·&nbsp;
+    <a href="#development">Development</a>
+  </p>
 
 </div>
+
+---
 
 `keyweave` replaces the common Karabiner-Elements + launcher combination with
 one small native daemon. It can turn Caps Lock into Hyper when held and Escape
@@ -22,6 +35,7 @@ keyboard shortcuts.
 - A LaunchAgent for automatic startup
 - No Karabiner-Elements or Raycast dependency
 
+<a id="install"></a>
 ## Requirements
 
 - macOS
@@ -40,6 +54,7 @@ security find-identity -p codesigning -v
 **Apple Development** identity. A stable signature matters because macOS
 Accessibility permission is tied to the identity of the executable.
 
+<a id="quickstart"></a>
 ## Quick start
 
 ```sh
