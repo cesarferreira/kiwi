@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fs::{self, OpenOptions},
     io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
@@ -9,7 +10,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use kiwi_keymapper::{
     DEFAULT_CONFIG,
-    config::Config,
+    config::{Action, Config},
     macos::{
         LABEL, accessibility_is_trusted, launch_agent_plist, remove_caps_remap, run_event_tap,
     },
@@ -36,6 +37,8 @@ enum Command {
     },
     /// Validate the config without starting the daemon
     Validate,
+    /// Print the configured shortcuts
+    List,
     /// Run the keyboard event daemon in the foreground
     Run,
     /// Install and start the per-user LaunchAgent
@@ -69,6 +72,7 @@ pub fn run() -> Result<()> {
             println!("config is valid: {}", config_path.display());
             Ok(())
         }
+        Command::List => list_shortcuts(&config_path),
         Command::Run => run_event_tap(load_config(&config_path)?),
         Command::Install => install(&config_path),
         Command::Start => start(),
@@ -98,6 +102,72 @@ pub fn run() -> Result<()> {
 
 fn load_config(path: &Path) -> Result<kiwi_keymapper::config::CompiledConfig> {
     Config::from_path(path)?.compile()
+}
+
+fn list_shortcuts(config_path: &Path) -> Result<()> {
+    let config = load_config(config_path)?;
+    print!(
+        "{}",
+        shortcuts_table(&config.bindings, io::stdout().is_terminal())
+    );
+    Ok(())
+}
+
+fn shortcuts_table(bindings: &BTreeMap<String, Action>, color: bool) -> String {
+    let rows: Vec<_> = bindings
+        .iter()
+        .map(|(shortcut, action)| {
+            let (kind, value) = match action {
+                Action::LaunchApp(value) => ("app", value.clone()),
+                Action::OpenUrl(value) => ("url", value.clone()),
+                Action::RunCommand(value) => ("command", value.clone()),
+                Action::SendKeys(value) => ("keys", value.to_string()),
+            };
+            (shortcut.as_str(), kind, value)
+        })
+        .collect();
+    let shortcut_width = rows
+        .iter()
+        .map(|(shortcut, _, _)| shortcut.len())
+        .max()
+        .unwrap_or(0)
+        .max("SHORTCUT".len());
+    let kind_width = rows
+        .iter()
+        .map(|(_, kind, _)| kind.len())
+        .max()
+        .unwrap_or(0)
+        .max("TYPE".len());
+    let noun = if rows.len() == 1 {
+        "shortcut"
+    } else {
+        "shortcuts"
+    };
+    let title = paint(&format!("{} {noun}", rows.len()), "1;32", color);
+    let header = paint(
+        &format!(
+            "{:<shortcut_width$}  {:<kind_width$}  ACTION",
+            "SHORTCUT", "TYPE"
+        ),
+        "1",
+        color,
+    );
+    let mut output = format!("{title}\n\n{header}\n");
+    for (shortcut, kind, action) in rows {
+        let shortcut = paint(&format!("{shortcut:<shortcut_width$}"), "36", color);
+        let kind = paint(&format!("{kind:<kind_width$}"), "33", color);
+        let action = paint(&action, "32", color);
+        output.push_str(&format!("{shortcut}  {kind}  {action}\n"));
+    }
+    output
+}
+
+fn paint(value: &str, code: &str, color: bool) -> String {
+    if color {
+        format!("\u{1b}[{code}m{value}\u{1b}[0m")
+    } else {
+        value.into()
+    }
 }
 
 fn init_config(path: &Path, force: bool) -> Result<()> {
@@ -562,6 +632,7 @@ mod tests {
     use std::{cell::Cell, path::Path};
 
     use anyhow::Result;
+    use kiwi_keymapper::config::Config;
 
     use super::{ServiceManager, unload_if_loaded};
 
@@ -774,5 +845,25 @@ mod tests {
         );
 
         assert!(super::is_stable_requirement(&output));
+    }
+
+    #[test]
+    fn shortcut_table_colors_each_part_for_a_terminal() {
+        let config = Config::from_toml(
+            r#"
+[bindings]
+"hyper+a" = { app = "Arc" }
+"#,
+        )
+        .unwrap()
+        .compile()
+        .unwrap();
+
+        let output = super::shortcuts_table(&config.bindings, true);
+
+        assert!(output.contains("\u{1b}[1;32m1 shortcut\u{1b}[0m"));
+        assert!(output.contains("\u{1b}[36mhyper+a \u{1b}[0m"));
+        assert!(output.contains("\u{1b}[33mapp \u{1b}[0m"));
+        assert!(output.contains("\u{1b}[32mArc\u{1b}[0m"));
     }
 }

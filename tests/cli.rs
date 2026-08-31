@@ -76,3 +76,52 @@ fn help_exposes_start_and_stop_commands() {
     assert!(stdout.contains("  start"));
     assert!(stdout.contains("  stop"));
 }
+
+#[test]
+fn list_prints_enabled_shortcuts_as_an_aligned_table() {
+    let path = std::env::temp_dir().join(format!("kiwi-list-test-{}.toml", std::process::id()));
+    fs::write(
+        &path,
+        r#"
+[bindings]
+"hyper+u" = { url = "https://example.com" }
+"hyper+p" = { command = "bluepods connect AirPods" }
+"hyper+t" = { keys = "control+a" }
+"hyper+a" = { app = "Arc" }
+"hyper+x" = { app = "Disabled", enabled = false }
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_kiwi"))
+        .args(["--config", path.to_str().unwrap(), "list"])
+        .output()
+        .unwrap();
+    fs::remove_file(path).unwrap();
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        concat!(
+            "4 shortcuts\n",
+            "\n",
+            "SHORTCUT  TYPE     ACTION\n",
+            "hyper+a   app      Arc\n",
+            "hyper+p   command  bluepods connect AirPods\n",
+            "hyper+t   keys     control+a\n",
+            "hyper+u   url      https://example.com\n",
+        )
+    );
+}
+
+#[test]
+fn help_exposes_the_list_command() {
+    let output = Command::new(env!("CARGO_BIN_EXE_kiwi"))
+        .arg("--help")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    assert!(output.status.success());
+    assert!(stdout.contains("  list"));
+}

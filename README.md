@@ -395,6 +395,7 @@ command.
 | `kiwi init` | Create the default config if it does not exist |
 | `kiwi init --force` | Replace the config with the generated default |
 | `kiwi validate` | Parse and validate the selected config |
+| `kiwi list` | Print enabled shortcuts as a colored table |
 | `kiwi run` | Run the daemon in the foreground |
 | `kiwi install` | Validate, stably sign, install, and start the LaunchAgent |
 | `kiwi start` | Start an installed LaunchAgent |
