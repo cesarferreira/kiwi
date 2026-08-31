@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Error, Result};
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 
 use crate::config::{CompiledConfig, Config};
@@ -97,9 +97,31 @@ fn watch_loop(
                 }
             }
             Err(error) => {
-                eprintln!("reload failed: {error:#}; keeping previous config");
+                eprintln!(
+                    "reload failed: {}; keeping previous config",
+                    reload_error(&error)
+                );
             }
         }
+    }
+}
+
+fn reload_error(error: &Error) -> String {
+    let summary = error.to_string();
+    let root = error.root_cause().to_string();
+    let mut lines = root.lines().map(str::trim).filter(|line| !line.is_empty());
+    let first = lines.next().unwrap_or("unknown config error");
+    let last = lines.next_back().unwrap_or(first);
+    let detail = if first == last {
+        first.to_owned()
+    } else {
+        format!("{first}: {last}")
+    };
+
+    if summary.contains('\n') || summary == first || summary == detail {
+        detail
+    } else {
+        format!("{summary}: {detail}")
     }
 }
 
@@ -137,7 +159,7 @@ mod tests {
         time::Duration,
     };
 
-    use super::watch_config;
+    use super::{reload_error, watch_config};
 
     const INITIAL: &str = r#"
         [bindings]
@@ -239,5 +261,16 @@ mod tests {
 
         let config = receiver.recv_timeout(Duration::from_secs(5)).unwrap();
         assert!(config.bindings.contains_key("hyper+b"));
+    }
+
+    #[test]
+    fn reload_error_is_condensed_to_one_informative_line() {
+        let error = anyhow::anyhow!("parse failed\n| source excerpt\nspecific reason")
+            .context("invalid config");
+
+        assert_eq!(
+            reload_error(&error),
+            "invalid config: parse failed: specific reason"
+        );
     }
 }
