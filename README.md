@@ -32,6 +32,8 @@ keyboard shortcuts.
 - Caps Lock → Hyper/Escape dual-role key
 - App, URL, command, and key-sequence actions
 - Generic and side-specific modifiers
+- Automatic config reloads, including symlinked dotfiles
+- A read-only live shortcut listener
 - A LaunchAgent for automatic startup
 - No Karabiner-Elements or Raycast dependency
 
@@ -371,7 +373,7 @@ location:
 ```sh
 mkdir -p ~/.config/kiwi
 ln -s ~/dotfiles/kiwi/config.toml ~/.config/kiwi/config.toml
-kiwi restart
+kiwi validate
 ```
 
 Alternatively, use a custom path:
@@ -385,6 +387,45 @@ The LaunchAgent written by the second command remembers that custom path.
 Machine-specific app names, executable paths, and URL handlers still need to
 exist on each Mac. Run `kiwi doctor` after deploying.
 
+## Automatic reloads
+
+The daemon watches the selected config and reloads valid edits automatically.
+This also works when `~/.config/kiwi/config.toml` is a symlink into your
+dotfiles. Changes are applied after the current key sequence finishes, so an
+edit cannot split a held chord across two configurations.
+
+If an edit is invalid, Kiwi reports the error in its log and keeps the last
+valid configuration active. Fixing the file triggers another reload; no
+restart is needed. Changes to bindings, the Hyper tap action, and its emitted
+modifiers all reload live.
+
+Changing `[hyper].key` still requires `kiwi restart` because the physical HID
+mapping is established when the process starts. Kiwi rejects that part of a
+live reload and prints the restart instruction instead of leaving the keyboard
+in a mixed state.
+
+## Inspect live shortcuts
+
+Run the listener alongside the installed daemon to see how physical key presses
+resolve without executing actions or changing events:
+
+```sh
+kiwi listen
+```
+
+Example output:
+
+```text
+hyper+t  matched  app  Ghostty
+hyper+p  matched  command  /Users/me/.local/bin/open-project
+hyper+z  unmatched
+```
+
+Interactive output is colored by chord, match state, and action type. Piped
+output is plain text. Repeats, releases, modifier-only events, Kiwi-generated
+synthetic keys, and a Hyper tap by itself are omitted. The listener uses the
+same automatic reload behavior as the daemon.
+
 ## Commands
 
 The global `--config <PATH>` option selects a non-default configuration for any
@@ -397,6 +438,7 @@ command.
 | `kiwi validate` | Parse and validate the selected config |
 | `kiwi list` | Print enabled shortcuts as a colored table |
 | `kiwi run` | Run the daemon in the foreground |
+| `kiwi listen` | Show resolved shortcuts without executing actions |
 | `kiwi install` | Validate, stably sign, install, and start the LaunchAgent |
 | `kiwi start` | Start an installed LaunchAgent |
 | `kiwi stop` | Stop the LaunchAgent and restore Caps Lock without uninstalling |
@@ -408,8 +450,9 @@ command.
 | `kiwi config-path` | Print the active config path |
 
 Use `kiwi run` while developing to keep logs in the terminal. Stop the
-installed agent first if necessary so two instances do not process the same
-shortcut.
+installed agent first if necessary so two daemons do not process the same
+shortcut. `kiwi listen` is read-only and is designed to run alongside either
+one.
 
 ## Installation workflows
 
@@ -444,7 +487,9 @@ with a stable signature and refreshes the LaunchAgent.
    without another key emits the configured tap key.
 4. Matching chords dispatch their action on a worker thread so slow commands do
    not block keyboard input.
-5. A per-user LaunchAgent starts the daemon at login and restarts it if needed.
+5. An event-driven watcher compiles config edits off the keyboard callback and
+   swaps in only valid, compatible changes at an idle key boundary.
+6. A per-user LaunchAgent starts the daemon at login and restarts it if needed.
 
 The LaunchAgent is stored at
 `~/Library/LaunchAgents/io.github.cesarferreira.kiwi.plist`.
@@ -453,16 +498,16 @@ The LaunchAgent is stored at
 
 `kiwi` stays asleep between keyboard events and keeps the event-tap callback
 small. A release build measured on a 14-core Apple M4 Pro with macOS 26.6.2,
-Rust 1.98.0, and nine configured bindings produced:
+Rust 1.98.0, and ten configured bindings produced:
 
 | Metric | Result |
 |---|---:|
-| Release binary | 934 KiB |
-| Idle daemon | <0.1% sampled CPU, 2.8 MiB physical footprint |
-| CLI startup and config validation | ~3–4 ms |
-| Config parse and compile | ~5.6 µs |
-| Ordinary key down/up cycle | ~21 ns |
-| Mapped Hyper shortcut cycle | ~67 ns |
+| Release binary | 1.01 MiB |
+| Idle daemon | <0.1% sampled CPU, 3.3 MiB physical footprint |
+| CLI startup and config validation | ~4.0 ms |
+| Config parse and compile | ~5.5 µs |
+| Ordinary key down/up cycle | ~20 ns |
+| Mapped Hyper shortcut cycle | ~68 ns |
 | Unmapped Hyper shortcut cycle | ~61 ns |
 
 The engine figures are medians from 11 samples with one to two million cycles
@@ -474,8 +519,9 @@ Run the same dependency-free benchmark with:
 cargo bench --bench engine
 ```
 
-Idle CPU was sampled for 15 seconds with Instruments Time Profiler, physical
-memory with `footprint`, and CLI startup over 100 runs with `hyperfine`.
+Idle CPU was sampled for 15 seconds with Instruments Time Profiler (zero CPU
+samples), physical memory with `footprint`, and CLI startup over 100 runs with
+`hyperfine --shell=none`.
 
 ## Troubleshooting
 
@@ -535,12 +581,15 @@ do not create distinct shortcuts. Keep only one normalized form.
 
 ### Config changes are not active
 
-The daemon reads the config when it starts:
+Check the daemon log for a reload error, then validate the selected file:
 
 ```sh
 kiwi validate
-kiwi restart
+tail -n 20 ~/Library/Logs/kiwi.log
 ```
+
+Invalid edits leave the last valid configuration running. Correct the file and
+it reloads automatically. Only a `[hyper].key` change requires `kiwi restart`.
 
 ### Another HID mapping is already installed
 
