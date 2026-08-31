@@ -111,6 +111,30 @@ fn side_specific_modifier_binding_works_without_hyper() {
 }
 
 #[test]
+fn side_specific_binding_wins_over_a_matching_generic_binding() {
+    let config = Config::from_toml(
+        r#"
+        [bindings]
+        "option+h" = { app = "Generic" }
+        "left_option+h" = { app = "Specific" }
+        "#,
+    )
+    .unwrap()
+    .compile()
+    .unwrap();
+    let mut engine = Engine::new(config);
+    engine.handle(Input::Modifier {
+        modifier: Modifier::LeftOption,
+        kind: EventKind::Down,
+    });
+
+    assert_eq!(
+        engine.handle(press("h")),
+        Decision::Trigger(Action::LaunchApp("Specific".into()))
+    );
+}
+
+#[test]
 fn pressing_another_key_prevents_escape_even_if_it_is_unmapped() {
     let mut engine = engine();
     engine.handle(press("caps_lock"));

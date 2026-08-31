@@ -16,6 +16,15 @@ fn maps_common_ansi_and_navigation_keys_both_ways() {
 }
 
 #[test]
+fn hardware_keys_clone_without_copying_their_static_name() {
+    let key = keycode_to_key(0).unwrap();
+    let cloned = key.clone();
+
+    assert_eq!(key.as_str(), "a");
+    assert_eq!(key.as_str().as_ptr(), cloned.as_str().as_ptr());
+}
+
+#[test]
 fn preserves_the_side_of_physical_modifiers() {
     assert_eq!(modifier_for_keycode(58), Some(Modifier::LeftOption));
     assert_eq!(modifier_for_keycode(61), Some(Modifier::RightOption));

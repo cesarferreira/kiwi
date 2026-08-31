@@ -1,4 +1,9 @@
-use std::{collections::BTreeMap, fs, path::Path, str::FromStr};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fs,
+    path::Path,
+    str::FromStr,
+};
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
@@ -36,7 +41,7 @@ impl Config {
     pub fn compile(self) -> Result<CompiledConfig> {
         let hyper = self.hyper.compile()?;
         let mut bindings = BTreeMap::new();
-        let mut compiled_bindings = Vec::new();
+        let mut compiled_bindings: HashMap<Key, Vec<(Chord, Action)>> = HashMap::new();
 
         for (source, binding) in self.bindings {
             if !binding.enabled {
@@ -52,7 +57,10 @@ impl Config {
                 .compile()
                 .map_err(|error| anyhow::anyhow!("invalid binding `{source}`: {error:#}"))?;
             bindings.insert(normalized, action.clone());
-            compiled_bindings.push((chord, action));
+            compiled_bindings
+                .entry(chord.key.clone())
+                .or_default()
+                .push((chord, action));
         }
 
         Ok(CompiledConfig {
@@ -67,12 +75,13 @@ impl Config {
 pub struct CompiledConfig {
     pub hyper: Hyper,
     pub bindings: BTreeMap<String, Action>,
-    compiled_bindings: Vec<(Chord, Action)>,
+    compiled_bindings: HashMap<Key, Vec<(Chord, Action)>>,
 }
 
 impl CompiledConfig {
     pub(crate) fn action_for(&self, actual: &Chord) -> Option<&Action> {
         self.compiled_bindings
+            .get(&actual.key)?
             .iter()
             .filter(|(binding, _)| chord_matches(binding, actual))
             .max_by_key(|(binding, _)| {

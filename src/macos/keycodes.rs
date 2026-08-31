@@ -4,7 +4,7 @@ use core_graphics::event::KeyCode;
 use crate::key::{Key, Modifier};
 
 pub fn keycode_to_key(code: u16) -> Option<Key> {
-    key_name(code).and_then(|name| name.parse().ok())
+    key_name(code).and_then(Key::from_static)
 }
 
 pub fn key_to_keycode(key: &Key) -> Result<u16> {

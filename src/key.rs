@@ -1,13 +1,17 @@
-use std::{fmt, str::FromStr};
+use std::{borrow::Cow, fmt, str::FromStr};
 
 use anyhow::{Result, bail};
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct Key(String);
+pub struct Key(Cow<'static, str>);
 
 impl Key {
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    pub(crate) fn from_static(value: &'static str) -> Option<Self> {
+        is_key(value).then_some(Self(Cow::Borrowed(value)))
     }
 }
 
@@ -23,7 +27,7 @@ impl FromStr for Key {
     fn from_str(value: &str) -> Result<Self> {
         let key = normalize_key(value);
         if is_key(&key) {
-            Ok(Self(key))
+            Ok(Self(Cow::Owned(key)))
         } else {
             bail!("unknown key `{value}`")
         }

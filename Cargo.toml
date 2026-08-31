@@ -12,6 +12,10 @@ repository = "https://github.com/cesarferreira/kiwi"
 name = "kiwi"
 path = "src/main.rs"
 
+[[bench]]
+name = "engine"
+harness = false
+
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }

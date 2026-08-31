@@ -449,6 +449,34 @@ with a stable signature and refreshes the LaunchAgent.
 The LaunchAgent is stored at
 `~/Library/LaunchAgents/io.github.cesarferreira.kiwi.plist`.
 
+## Performance
+
+`kiwi` stays asleep between keyboard events and keeps the event-tap callback
+small. A release build measured on a 14-core Apple M4 Pro with macOS 26.6.2,
+Rust 1.98.0, and nine configured bindings produced:
+
+| Metric | Result |
+|---|---:|
+| Release binary | 934 KiB |
+| Idle daemon | <0.1% sampled CPU, 2.8 MiB physical footprint |
+| CLI startup and config validation | ~3–4 ms |
+| Config parse and compile | ~5.6 µs |
+| Ordinary key down/up cycle | ~21 ns |
+| Mapped Hyper shortcut cycle | ~67 ns |
+| Unmapped Hyper shortcut cycle | ~61 ns |
+
+The engine figures are medians from 11 samples with one to two million cycles
+per sample. They measure in-process routing only; macOS event delivery and the
+application, URL, or command launched by an action are outside that timing.
+Run the same dependency-free benchmark with:
+
+```sh
+cargo bench --bench engine
+```
+
+Idle CPU was sampled for 15 seconds with Instruments Time Profiler, physical
+memory with `footprint`, and CLI startup over 100 runs with `hyperfine`.
+
 ## Troubleshooting
 
 ### Caps Lock acts like normal Caps Lock
