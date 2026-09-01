@@ -43,6 +43,7 @@ fn compiles_app_behaviors_and_defaults_to_launch() {
         "hyper+h" = { app = "Ghostty", behavior = "hide" }
         "hyper+c" = { app = "Ghostty", behavior = "cycle" }
         "hyper+n" = { app = "Ghostty", behavior = "new_window" }
+        "hyper+t" = { app = "Ghostty", behavior = "toggle" }
         "#,
     )
     .unwrap()
@@ -54,6 +55,7 @@ fn compiles_app_behaviors_and_defaults_to_launch() {
         ("hyper+h", AppBehavior::Hide),
         ("hyper+c", AppBehavior::Cycle),
         ("hyper+n", AppBehavior::NewWindow),
+        ("hyper+t", AppBehavior::Toggle),
     ] {
         assert_eq!(
             config.bindings.get(shortcut),
@@ -81,8 +83,8 @@ fn rejects_behavior_without_app_and_unknown_behavior() {
             "`behavior` is only valid with `app`",
         ),
         (
-            r#""hyper+t" = { app = "Ghostty", behavior = "toggle" }"#,
-            "unknown app behavior `toggle`",
+            r#""hyper+t" = { app = "Ghostty", behavior = "minimize" }"#,
+            "unknown app behavior `minimize`; expected `launch`, `toggle`, `hide`, `cycle`, or `new_window`",
         ),
     ] {
         let config = Config::from_toml(&format!("[bindings]\n{binding}\n")).unwrap();

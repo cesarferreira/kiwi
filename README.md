@@ -124,7 +124,8 @@ modifiers = ["command", "control", "option", "shift"]
 # Launch or focus an application by name (the default behavior).
 "hyper+t" = { app = "Ghostty" }
 
-# Hide, cycle windows, or request a new window.
+# Toggle, hide, cycle windows, or request a new window.
+"hyper+return" = { app = "Ghostty", behavior = "toggle" }
 "hyper+h" = { app = "Ghostty", behavior = "hide" }
 "hyper+grave" = { app = "Ghostty", behavior = "cycle" }
 "hyper+n" = { app = "Safari", behavior = "new_window" }
@@ -202,6 +203,7 @@ compatible and defaults to `launch`:
 ```toml
 [bindings]
 "hyper+t" = { app = "Ghostty" }
+"hyper+return" = { app = "Ghostty", behavior = "toggle" }
 "hyper+h" = { app = "Slack", behavior = "hide" }
 "hyper+grave" = { app = "/Applications/Ghostty.app", behavior = "cycle" }
 "hyper+n" = { app = "Safari", behavior = "new_window" }
@@ -211,6 +213,7 @@ compatible and defaults to `launch`:
 | Behavior | Meaning |
 |---|---|
 | `launch` | Launch or focus the app with macOS `open` (default) |
+| `toggle` | Launch the app when it is not running, activate it when backgrounded, or hide it without quitting when frontmost |
 | `hide` | Hide a running app without quitting it; reports an action error when it is not running |
 | `cycle` | Select the next accessibility window of the configured running app, raise it, then activate that app |
 | `new_window` | Ask macOS for a new app instance/window |
@@ -218,8 +221,12 @@ compatible and defaults to `launch`:
 `behavior` is valid only alongside `app`. App names, absolute `.app` paths, and
 reverse-DNS bundle identifiers such as `com.apple.Safari` are supported. Names
 and paths use `open -a` (or `open -na` for `new_window`); bundle identifiers use
-`open -b` (or `open -n -b`). Hide and cycle resolve only an already-running
-System Events process and never launch the target while resolving it.
+`open -b` (or `open -n -b`). Toggle, hide, and cycle resolve only an
+already-running System Events process and never launch the target while
+resolving it. Toggle inspects every process matching the configured target in
+one atomic operation: if any of them is frontmost it hides that process,
+otherwise it activates a matching one. Only when no process matches does Kiwi
+launch the target with `open`. Hiding does not quit the app.
 
 Window cycling uses the target process's accessibility window list and
 `AXMain`, `AXFocused`, and `AXRaise`; it never sends a global Command+grave.
@@ -228,17 +235,15 @@ accessibility windows. `new_window` is app-dependent: single-window utilities
 and apps that restore one shared window may ignore the request or open another
 instance without showing an additional window.
 
-##### Permissions for the `hide` and `cycle` app controls
+##### Permissions for the `toggle`, `hide`, and `cycle` app controls
 
-`hide` and `cycle` are app controls: Kiwi runs `/usr/bin/osascript` with a
-static script that asks `System Events` to act on the target process. macOS
-treats that as automation, so the first time one of these bindings fires, macOS
-may ask to allow control of `System Events`. That prompt, and the grant it
+`toggle`, `hide`, and `cycle` are app controls: Kiwi runs `/usr/bin/osascript`
+with a static script that asks `System Events` to act on the target process.
+macOS treats that as automation, so the first time one of these bindings fires,
+macOS may ask to allow control of `System Events`. That prompt, and the grant it
 creates, belong to the process sending the events — the `osascript` child that
 Kiwi spawns — rather than to the `kiwi` binary itself. `launch` and
-`new_window` only run `open` and need no automation grant. A `toggle` behavior
-planned for a later release will use the same `osascript` path and the same
-grant.
+`new_window` only run `open` and need no automation grant.
 
 Review or grant it in **System Settings → Privacy & Security → Automation**,
 where the entry for the sending process lists a `System Events` checkbox. Keep
@@ -249,7 +254,7 @@ access.
 `kiwi doctor` checks Kiwi's own config, code signature, LaunchAgent, and
 Accessibility trust. It does not inspect the separate Automation grant given to
 the `osascript` child process, so an all-green `doctor` does not prove that
-`hide` and `cycle` are allowed to run.
+`toggle`, `hide`, and `cycle` are allowed to run.
 
 #### `url`
 
@@ -407,6 +412,9 @@ physical ANSI key position when a different macOS input layout is active.
 
 ```toml
 [bindings]
+# Summon Ghostty, or hide it without quitting when it is already frontmost.
+"hyper+t" = { app = "Ghostty", behavior = "toggle" }
+
 # Hide a running app without quitting it.
 "hyper+h" = { app = "Slack", behavior = "hide" }
 
@@ -496,7 +504,7 @@ kiwi listen
 Example output:
 
 ```text
-hyper+t  matched  app  Ghostty
+hyper+t  matched  app  Ghostty (toggle)
 hyper+p  matched  command  /Users/me/.local/bin/open-project
 hyper+z  unmatched
 ```
@@ -510,7 +518,7 @@ For compact newline-delimited JSON, run `kiwi --format json listen`. Each
 observation is one object on stdout:
 
 ```json
-{"schema_version":1,"shortcut":"hyper+t","matched":true,"type":"app","action":"Ghostty"}
+{"schema_version":1,"shortcut":"hyper+t","matched":true,"type":"app","action":"Ghostty (toggle)"}
 {"schema_version":1,"shortcut":"hyper+z","matched":false,"type":null,"action":null}
 ```
 
@@ -695,9 +703,9 @@ Or set the environment explicitly:
 "hyper+r" = { command = "PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin my-command" }
 ```
 
-### A `hide` or `cycle` binding does nothing
+### A `hide`, `cycle`, or `toggle` binding does nothing
 
-Both app controls drive `System Events` through `/usr/bin/osascript`, which
+These app controls drive `System Events` through `/usr/bin/osascript`, which
 needs an Automation grant separate from Kiwi's Accessibility permission:
 
 1. Open **System Settings → Privacy & Security → Automation** and enable
@@ -712,9 +720,11 @@ needs an Automation grant separate from Kiwi's Accessibility permission:
    Mac, not only Kiwi.
 
 `kiwi doctor` cannot see that grant, so it can report a healthy installation
-while these two behaviors stay blocked. App action failures — a denied grant,
-a target that is not running, or a target without windows — are written to the
-daemon log:
+while these behaviors stay blocked. A blocked `toggle` cannot determine whether
+the target is frontmost, so it reports the automation error instead of falling
+back to launching the app. App action failures — a denied grant, a target that
+is not running, a target without windows, or an unexpected `toggle` result —
+are written to the daemon log:
 
 ```sh
 tail -n 20 ~/Library/Logs/kiwi.log

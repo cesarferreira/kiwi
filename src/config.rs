@@ -28,6 +28,7 @@ pub struct AppAction {
 pub enum AppBehavior {
     #[default]
     Launch,
+    Toggle,
     Hide,
     Cycle,
     NewWindow,
@@ -39,11 +40,12 @@ impl FromStr for AppBehavior {
     fn from_str(value: &str) -> Result<Self> {
         match value {
             "launch" => Ok(Self::Launch),
+            "toggle" => Ok(Self::Toggle),
             "hide" => Ok(Self::Hide),
             "cycle" => Ok(Self::Cycle),
             "new_window" => Ok(Self::NewWindow),
             other => bail!(
-                "unknown app behavior `{other}`; expected `launch`, `hide`, `cycle`, or `new_window`"
+                "unknown app behavior `{other}`; expected `launch`, `toggle`, `hide`, `cycle`, or `new_window`"
             ),
         }
     }
@@ -64,6 +66,7 @@ impl AppAction {
     fn display_value(&self) -> String {
         match self.behavior {
             AppBehavior::Launch => self.target.clone(),
+            AppBehavior::Toggle => format!("{} (toggle)", self.target),
             AppBehavior::Hide => format!("{} (hide)", self.target),
             AppBehavior::Cycle => format!("{} (cycle)", self.target),
             AppBehavior::NewWindow => format!("{} (new window)", self.target),

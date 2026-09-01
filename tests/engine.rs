@@ -79,6 +79,29 @@ fn hyper_app_binding_triggers_once_and_consumes_key_pair() {
 }
 
 #[test]
+fn hyper_toggle_binding_preserves_the_app_behavior() {
+    let config = Config::from_toml(
+        r#"
+        [bindings]
+        "hyper+t" = { app = "Ghostty", behavior = "toggle" }
+        "#,
+    )
+    .unwrap()
+    .compile()
+    .unwrap();
+    let mut engine = Engine::new(config);
+
+    assert_eq!(engine.handle(press("caps_lock")), Decision::Suppress);
+    assert_eq!(
+        engine.handle(press("t")),
+        Decision::Trigger(Action::App(AppAction {
+            target: "Ghostty".into(),
+            behavior: AppBehavior::Toggle,
+        }))
+    );
+}
+
+#[test]
 fn unmapped_hyper_chord_passes_with_configured_modifiers() {
     let mut engine = engine();
     engine.handle(press("caps_lock"));

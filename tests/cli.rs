@@ -188,6 +188,7 @@ fn list_text_and_json_distinguish_app_behaviors() {
 "hyper+h" = { app = "Ghostty", behavior = "hide" }
 "hyper+c" = { app = "Ghostty", behavior = "cycle" }
 "hyper+n" = { app = "Ghostty", behavior = "new_window" }
+"hyper+t" = { app = "Ghostty", behavior = "toggle" }
 "#,
         &["list"],
     );
@@ -197,6 +198,7 @@ fn list_text_and_json_distinguish_app_behaviors() {
     assert!(stdout.contains("hyper+h   app   Ghostty (hide)\n"));
     assert!(stdout.contains("hyper+c   app   Ghostty (cycle)\n"));
     assert!(stdout.contains("hyper+n   app   Ghostty (new window)\n"));
+    assert!(stdout.contains("hyper+t   app   Ghostty (toggle)\n"));
 
     let (_, json) = run_conflicts(
         r#"
@@ -204,6 +206,7 @@ fn list_text_and_json_distinguish_app_behaviors() {
 "hyper+h" = { app = "Ghostty", behavior = "hide" }
 "hyper+c" = { app = "Ghostty", behavior = "cycle" }
 "hyper+n" = { app = "Ghostty", behavior = "new_window" }
+"hyper+t" = { app = "Ghostty", behavior = "toggle" }
 "#,
         &["--format", "json", "list"],
     );
@@ -214,6 +217,7 @@ fn list_text_and_json_distinguish_app_behaviors() {
     assert_eq!(bindings[0]["action"], "Ghostty (cycle)");
     assert_eq!(bindings[1]["action"], "Ghostty (hide)");
     assert_eq!(bindings[2]["action"], "Ghostty (new window)");
+    assert_eq!(bindings[3]["action"], "Ghostty (toggle)");
 }
 
 #[test]
@@ -392,25 +396,25 @@ modifiers = ["command", "option"]
 
 #[test]
 fn conflict_text_and_json_distinguish_app_behavior() {
-    let config = r#"
+    for (behavior, expected) in [("hide", "Finder (hide)"), ("toggle", "Finder (toggle)")] {
+        let config = format!(
+            r#"
 [bindings]
-"command+space" = { app = "Finder", behavior = "hide" }
-"#;
-    let (_, text) = run_conflicts(config, &["list", "--conflicts"]);
-    assert_eq!(text.status.code(), Some(1));
-    assert!(
-        String::from_utf8(text.stdout)
-            .unwrap()
-            .contains("Finder (hide)")
-    );
+"command+space" = {{ app = "Finder", behavior = "{behavior}" }}
+"#
+        );
+        let (_, text) = run_conflicts(&config, &["list", "--conflicts"]);
+        assert_eq!(text.status.code(), Some(1));
+        assert!(String::from_utf8(text.stdout).unwrap().contains(expected));
 
-    let (_, json) = run_conflicts(config, &["list", "--conflicts", "--format", "json"]);
-    assert_eq!(json.status.code(), Some(1));
-    let json: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
-    assert_eq!(json["bindings"][0]["type"], "app");
-    assert_eq!(json["bindings"][0]["action"], "Finder (hide)");
-    assert_eq!(json["conflicts"][0]["type"], "app");
-    assert_eq!(json["conflicts"][0]["action"], "Finder (hide)");
+        let (_, json) = run_conflicts(&config, &["list", "--conflicts", "--format", "json"]);
+        assert_eq!(json.status.code(), Some(1));
+        let json: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+        assert_eq!(json["bindings"][0]["type"], "app");
+        assert_eq!(json["bindings"][0]["action"], expected);
+        assert_eq!(json["conflicts"][0]["type"], "app");
+        assert_eq!(json["conflicts"][0]["action"], expected);
+    }
 }
 
 #[test]

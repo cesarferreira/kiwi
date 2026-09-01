@@ -287,6 +287,7 @@ mod tests {
     #[test]
     fn formats_app_behaviors_in_text_and_ndjson() {
         for (behavior, suffix) in [
+            (AppBehavior::Toggle, "toggle"),
             (AppBehavior::Hide, "hide"),
             (AppBehavior::Cycle, "cycle"),
             (AppBehavior::NewWindow, "new window"),

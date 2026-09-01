@@ -106,10 +106,10 @@ fn launch_and_new_window_commands_support_every_target_form() {
 }
 
 #[test]
-fn hide_and_cycle_pass_classification_and_target_as_separate_script_arguments() {
+fn toggle_hide_and_cycle_pass_classification_and_target_as_separate_script_arguments() {
     let target = r#"Ghostty"; error "injected""#;
 
-    for behavior in [AppBehavior::Hide, AppBehavior::Cycle] {
+    for behavior in [AppBehavior::Toggle, AppBehavior::Hide, AppBehavior::Cycle] {
         let command = command_for(&AppAction {
             target: target.into(),
             behavior,
@@ -122,6 +122,7 @@ fn hide_and_cycle_pass_classification_and_target_as_separate_script_arguments() 
         assert_eq!(
             command.args[3],
             match behavior {
+                AppBehavior::Toggle => "toggle",
                 AppBehavior::Hide => "hide",
                 AppBehavior::Cycle => "cycle",
                 _ => unreachable!(),
@@ -132,6 +133,38 @@ fn hide_and_cycle_pass_classification_and_target_as_separate_script_arguments() 
         assert!(command.args[1].contains("bundle identifier"));
         assert!(command.args[1].contains("application is not running"));
     }
+}
+
+#[test]
+fn toggle_script_atomically_activates_or_hides_within_one_operation() {
+    let command = command_for(&AppAction {
+        target: "Ghostty".into(),
+        behavior: AppBehavior::Toggle,
+    });
+    let script = &command.args[1];
+
+    assert_eq!(command.program, "/usr/bin/osascript");
+    assert!(script.contains(r#"return "missing""#));
+    assert!(script.contains(r#"return "activated""#));
+    assert!(script.contains(r#"return "hidden""#));
+    assert!(!script.contains("quit"));
+    assert!(!script.contains("keystroke"));
+}
+
+#[test]
+fn toggle_script_hides_the_frontmost_matching_process_and_otherwise_activates_one() {
+    let command = command_for(&AppAction {
+        target: "Ghostty".into(),
+        behavior: AppBehavior::Toggle,
+    });
+    let script = &command.args[1];
+
+    assert!(script.contains("repeat with candidateProcess in matchingProcesses"));
+    assert!(script.contains("if frontmost of candidateProcess then"));
+    assert!(script.contains("set frontmostProcess to contents of candidateProcess"));
+    assert!(script.contains("set visible of frontmostProcess to false"));
+    assert!(script.contains("set frontmost of targetProcess to true"));
+    assert!(!script.contains("if frontmost of targetProcess then"));
 }
 
 #[test]
@@ -182,7 +215,7 @@ fn cycle_uses_target_process_windows_and_ax_actions_without_global_keystrokes() 
     assert!(script.contains(r#"attribute "AXFocused""#));
     let raise = script.find(r#"perform action "AXRaise""#).unwrap();
     let frontmost = script
-        .find("set frontmost of targetProcess to true")
+        .rfind("set frontmost of targetProcess to true")
         .unwrap();
     assert!(raise < frontmost);
 }
