@@ -1,11 +1,18 @@
 use kiwi_keymapper::{
-    config::{Action, Config},
+    config::{Action, AppAction, AppBehavior, Config},
     engine::{Decision, Engine, EventKind, Input},
     key::{Key, Modifier},
 };
 
 fn key(name: &str) -> Key {
     name.parse().unwrap()
+}
+
+fn launch(target: &str) -> Action {
+    Action::App(AppAction {
+        target: target.into(),
+        behavior: AppBehavior::Launch,
+    })
 }
 
 fn engine() -> Engine {
@@ -57,7 +64,7 @@ fn hyper_app_binding_triggers_once_and_consumes_key_pair() {
     assert_eq!(engine.handle(press("caps_lock")), Decision::Suppress);
     assert_eq!(
         engine.handle(press("t")),
-        Decision::Trigger(Action::LaunchApp("Ghostty".into()))
+        Decision::Trigger(launch("Ghostty"))
     );
     assert_eq!(
         engine.handle(Input::Key {
@@ -130,7 +137,7 @@ fn side_specific_binding_wins_over_a_matching_generic_binding() {
 
     assert_eq!(
         engine.handle(press("h")),
-        Decision::Trigger(Action::LaunchApp("Specific".into()))
+        Decision::Trigger(launch("Specific"))
     );
 }
 
@@ -174,7 +181,7 @@ fn replacing_config_changes_the_next_binding() {
     engine.handle(press("caps_lock"));
     assert_eq!(
         engine.handle(press("b")),
-        Decision::Trigger(Action::LaunchApp("Replacement".into()))
+        Decision::Trigger(launch("Replacement"))
     );
 }
 

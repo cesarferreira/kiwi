@@ -1,4 +1,4 @@
-use kiwi_keymapper::config::{Action, Config};
+use kiwi_keymapper::config::{Action, AppAction, AppBehavior, Config};
 
 const EXAMPLE: &str = r#"
 [hyper]
@@ -22,13 +22,76 @@ fn parses_portable_hyper_and_binding_actions() {
     assert_eq!(compiled.hyper.tap.to_string(), "escape");
     assert_eq!(
         compiled.bindings.get("hyper+t"),
-        Some(&Action::LaunchApp("Ghostty".into()))
+        Some(&Action::App(AppAction {
+            target: "Ghostty".into(),
+            behavior: AppBehavior::Launch,
+        }))
     );
     assert_eq!(
         compiled.bindings.get("hyper+a"),
         Some(&Action::SendKeys("control+a".parse().unwrap()))
     );
     assert!(!compiled.bindings.contains_key("left_option+h"));
+}
+
+#[test]
+fn compiles_app_behaviors_and_defaults_to_launch() {
+    let config = Config::from_toml(
+        r#"
+        [bindings]
+        "hyper+l" = { app = "Ghostty" }
+        "hyper+h" = { app = "Ghostty", behavior = "hide" }
+        "hyper+c" = { app = "Ghostty", behavior = "cycle" }
+        "hyper+n" = { app = "Ghostty", behavior = "new_window" }
+        "#,
+    )
+    .unwrap()
+    .compile()
+    .unwrap();
+
+    for (shortcut, behavior) in [
+        ("hyper+l", AppBehavior::Launch),
+        ("hyper+h", AppBehavior::Hide),
+        ("hyper+c", AppBehavior::Cycle),
+        ("hyper+n", AppBehavior::NewWindow),
+    ] {
+        assert_eq!(
+            config.bindings.get(shortcut),
+            Some(&Action::App(AppAction {
+                target: "Ghostty".into(),
+                behavior,
+            }))
+        );
+    }
+}
+
+#[test]
+fn rejects_behavior_without_app_and_unknown_behavior() {
+    for (binding, expected) in [
+        (
+            r#""hyper+u" = { url = "https://example.com", behavior = "hide" }"#,
+            "`behavior` is only valid with `app`",
+        ),
+        (
+            r#""hyper+c" = { command = "echo hi", behavior = "cycle" }"#,
+            "`behavior` is only valid with `app`",
+        ),
+        (
+            r#""hyper+k" = { keys = "control+a", behavior = "new_window" }"#,
+            "`behavior` is only valid with `app`",
+        ),
+        (
+            r#""hyper+t" = { app = "Ghostty", behavior = "toggle" }"#,
+            "unknown app behavior `toggle`",
+        ),
+    ] {
+        let config = Config::from_toml(&format!("[bindings]\n{binding}\n")).unwrap();
+        let error = config.compile().unwrap_err().to_string();
+        assert!(
+            error.contains(expected),
+            "expected `{expected}` in `{error}` for {binding}"
+        );
+    }
 }
 
 #[test]

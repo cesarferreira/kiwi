@@ -89,13 +89,20 @@ mod tests {
 
     use super::{ReloadNotice, ReloadingEngine};
     use crate::{
-        config::{Action, Config},
+        config::{Action, AppAction, AppBehavior, Config},
         engine::{Decision, EventKind, Input},
         key::Key,
     };
 
     fn config(contents: &str) -> crate::config::CompiledConfig {
         Config::from_toml(contents).unwrap().compile().unwrap()
+    }
+
+    fn launch(target: &str) -> Action {
+        Action::App(AppAction {
+            target: target.into(),
+            behavior: AppBehavior::Launch,
+        })
     }
 
     fn press(name: &str) -> Input {
@@ -134,10 +141,7 @@ mod tests {
         runtime.handle(press("caps_lock"));
         sender.send(replacement).unwrap();
         let old_binding = runtime.handle(press("a"));
-        assert_eq!(
-            old_binding.decision,
-            Decision::Trigger(Action::LaunchApp("Old".into()))
-        );
+        assert_eq!(old_binding.decision, Decision::Trigger(launch("Old")));
         assert!(old_binding.notices.is_empty());
 
         runtime.handle(release("a"));
@@ -147,7 +151,7 @@ mod tests {
         runtime.handle(press("caps_lock"));
         assert_eq!(
             runtime.handle(press("b")).decision,
-            Decision::Trigger(Action::LaunchApp("New".into()))
+            Decision::Trigger(launch("New"))
         );
     }
 
@@ -177,7 +181,7 @@ mod tests {
         assert_eq!(hyper_down.decision, Decision::Suppress);
         assert_eq!(
             runtime.handle(press("a")).decision,
-            Decision::Trigger(Action::LaunchApp("Old".into()))
+            Decision::Trigger(launch("Old"))
         );
     }
 
@@ -200,5 +204,32 @@ mod tests {
         runtime.observe(release("caps_lock"));
         runtime.handle(press("caps_lock"));
         assert!(runtime.handle(press("a")).chord.is_none());
+    }
+
+    #[test]
+    fn lost_passthrough_key_up_does_not_block_reload() {
+        let initial = config(
+            r#"
+            [bindings]
+            "hyper+a" = { app = "Old" }
+            "#,
+        );
+        let replacement = config(
+            r#"
+            [bindings]
+            "hyper+b" = { app = "New" }
+            "#,
+        );
+        let (sender, receiver) = mpsc::channel();
+        let mut runtime = ReloadingEngine::new(initial, receiver);
+
+        assert_eq!(runtime.handle(press("q")).decision, Decision::Pass);
+        sender.send(replacement).unwrap();
+        let boundary = runtime.handle(press("caps_lock"));
+        assert_eq!(boundary.notices, vec![ReloadNotice::Applied(1)]);
+        assert_eq!(
+            runtime.handle(press("b")).decision,
+            Decision::Trigger(launch("New"))
+        );
     }
 }

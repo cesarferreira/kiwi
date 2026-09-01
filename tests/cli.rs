@@ -180,6 +180,43 @@ modifiers = ["command", "option"]
 }
 
 #[test]
+fn list_text_and_json_distinguish_app_behaviors() {
+    let (_, text) = run_conflicts(
+        r#"
+[bindings]
+"hyper+l" = { app = "Ghostty" }
+"hyper+h" = { app = "Ghostty", behavior = "hide" }
+"hyper+c" = { app = "Ghostty", behavior = "cycle" }
+"hyper+n" = { app = "Ghostty", behavior = "new_window" }
+"#,
+        &["list"],
+    );
+    assert!(text.status.success());
+    let stdout = String::from_utf8(text.stdout).unwrap();
+    assert!(stdout.contains("hyper+l   app   Ghostty\n"));
+    assert!(stdout.contains("hyper+h   app   Ghostty (hide)\n"));
+    assert!(stdout.contains("hyper+c   app   Ghostty (cycle)\n"));
+    assert!(stdout.contains("hyper+n   app   Ghostty (new window)\n"));
+
+    let (_, json) = run_conflicts(
+        r#"
+[bindings]
+"hyper+h" = { app = "Ghostty", behavior = "hide" }
+"hyper+c" = { app = "Ghostty", behavior = "cycle" }
+"hyper+n" = { app = "Ghostty", behavior = "new_window" }
+"#,
+        &["--format", "json", "list"],
+    );
+    assert!(json.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    let bindings = json["bindings"].as_array().unwrap();
+    assert_eq!(bindings[0]["type"], "app");
+    assert_eq!(bindings[0]["action"], "Ghostty (cycle)");
+    assert_eq!(bindings[1]["action"], "Ghostty (hide)");
+    assert_eq!(bindings[2]["action"], "Ghostty (new window)");
+}
+
+#[test]
 fn help_exposes_the_list_command() {
     let output = Command::new(env!("CARGO_BIN_EXE_kiwi"))
         .arg("--help")
@@ -351,6 +388,29 @@ modifiers = ["command", "option"]
             path.display()
         )
     );
+}
+
+#[test]
+fn conflict_text_and_json_distinguish_app_behavior() {
+    let config = r#"
+[bindings]
+"command+space" = { app = "Finder", behavior = "hide" }
+"#;
+    let (_, text) = run_conflicts(config, &["list", "--conflicts"]);
+    assert_eq!(text.status.code(), Some(1));
+    assert!(
+        String::from_utf8(text.stdout)
+            .unwrap()
+            .contains("Finder (hide)")
+    );
+
+    let (_, json) = run_conflicts(config, &["list", "--conflicts", "--format", "json"]);
+    assert_eq!(json.status.code(), Some(1));
+    let json: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    assert_eq!(json["bindings"][0]["type"], "app");
+    assert_eq!(json["bindings"][0]["action"], "Finder (hide)");
+    assert_eq!(json["conflicts"][0]["type"], "app");
+    assert_eq!(json["conflicts"][0]["action"], "Finder (hide)");
 }
 
 #[test]

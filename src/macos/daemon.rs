@@ -32,6 +32,7 @@ use crate::{
 };
 
 use super::{
+    app_controller::{AppController, MacOsAppController},
     events::{EventDecoder, SYNTHETIC_EVENT_TAG},
     key_to_keycode,
     runtime::{ReloadNotice, ReloadingEngine},
@@ -276,16 +277,17 @@ fn mapping_state(output: &str) -> MappingState {
 }
 
 fn action_worker(receiver: mpsc::Receiver<Action>) {
+    let app_controller = MacOsAppController;
     for action in receiver {
-        if let Err(error) = execute_action(&action) {
+        if let Err(error) = execute_action(&action, &app_controller) {
             eprintln!("kiwi action failed: {error:#}");
         }
     }
 }
 
-fn execute_action(action: &Action) -> Result<()> {
+fn execute_action(action: &Action, app_controller: &impl AppController) -> Result<()> {
     match action {
-        Action::LaunchApp(app) => run_process(Command::new("/usr/bin/open").args(["-a", app])),
+        Action::App(action) => app_controller.execute(action),
         Action::OpenUrl(url) => run_process(Command::new("/usr/bin/open").arg(url)),
         Action::RunCommand(command) => run_process(Command::new("/bin/zsh").args(["-lc", command])),
         Action::SendKeys(chord) => post_chord(chord),

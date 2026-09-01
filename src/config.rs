@@ -12,19 +12,61 @@ use crate::key::{Chord, Key, Modifier};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Action {
-    LaunchApp(String),
+    App(AppAction),
     OpenUrl(String),
     RunCommand(String),
     SendKeys(Chord),
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AppAction {
+    pub target: String,
+    pub behavior: AppBehavior,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum AppBehavior {
+    #[default]
+    Launch,
+    Hide,
+    Cycle,
+    NewWindow,
+}
+
+impl FromStr for AppBehavior {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "launch" => Ok(Self::Launch),
+            "hide" => Ok(Self::Hide),
+            "cycle" => Ok(Self::Cycle),
+            "new_window" => Ok(Self::NewWindow),
+            other => bail!(
+                "unknown app behavior `{other}`; expected `launch`, `hide`, `cycle`, or `new_window`"
+            ),
+        }
+    }
+}
+
 impl Action {
     pub fn type_and_value(&self) -> (&'static str, String) {
         match self {
-            Self::LaunchApp(value) => ("app", value.clone()),
+            Self::App(action) => ("app", action.display_value()),
             Self::OpenUrl(value) => ("url", value.clone()),
             Self::RunCommand(value) => ("command", value.clone()),
             Self::SendKeys(value) => ("keys", value.to_string()),
+        }
+    }
+}
+
+impl AppAction {
+    fn display_value(&self) -> String {
+        match self.behavior {
+            AppBehavior::Launch => self.target.clone(),
+            AppBehavior::Hide => format!("{} (hide)", self.target),
+            AppBehavior::Cycle => format!("{} (cycle)", self.target),
+            AppBehavior::NewWindow => format!("{} (new window)", self.target),
         }
     }
 }
@@ -161,6 +203,7 @@ pub struct Hyper {
 #[serde(deny_unknown_fields)]
 pub struct BindingSpec {
     pub app: Option<String>,
+    pub behavior: Option<String>,
     pub url: Option<String>,
     pub command: Option<String>,
     pub keys: Option<String>,
@@ -183,9 +226,21 @@ impl BindingSpec {
             bail!("a binding must define exactly one of `app`, `url`, `command`, or `keys`");
         }
 
+        if self.behavior.is_some() && self.app.is_none() {
+            bail!("`behavior` is only valid with `app`");
+        }
+
         if let Some(app) = self.app {
             require_nonempty("app", &app)?;
-            return Ok(Action::LaunchApp(app));
+            let behavior = self
+                .behavior
+                .as_deref()
+                .unwrap_or("launch")
+                .parse::<AppBehavior>()?;
+            return Ok(Action::App(AppAction {
+                target: app,
+                behavior,
+            }));
         }
         if let Some(url) = self.url {
             require_nonempty("url", &url)?;

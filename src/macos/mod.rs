@@ -1,3 +1,4 @@
+pub mod app_controller;
 mod daemon;
 mod events;
 mod keycodes;
