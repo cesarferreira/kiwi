@@ -23,6 +23,49 @@ fn engine() -> Engine {
     Engine::new(config)
 }
 
+fn dual_role_engine() -> Engine {
+    let config = Config::from_toml(
+        r#"
+        [[dual_role]]
+        key = "space"
+        tap = "space"
+        hold_modifier = "leader"
+
+        [bindings]
+        "leader+f" = { app = "Finder" }
+        "hyper+leader+t" = { app = "Terminal" }
+        "#,
+    )
+    .unwrap()
+    .compile()
+    .unwrap();
+    Engine::new(config)
+}
+
+fn nested_dual_role_engine() -> Engine {
+    let config = Config::from_toml(
+        r#"
+        [[dual_role]]
+        key = "space"
+        tap = "space"
+        hold_modifier = "leader"
+
+        [[dual_role]]
+        key = "tab"
+        tap = "tab"
+        hold_modifier = "nav"
+
+        [bindings]
+        "leader+nav+f" = { app = "Both" }
+        "nav+f" = { app = "Nav" }
+        "#,
+    )
+    .unwrap()
+    .compile()
+    .unwrap();
+    Engine::new(config)
+}
+
 fn press(name: &str) -> Input {
     Input::Key {
         key: key(name),
@@ -223,4 +266,264 @@ fn preview_chord_ignores_non_observable_inputs() {
         }),
         None
     );
+}
+
+#[test]
+fn dual_role_tap_emits_once_and_suppresses_repeats() {
+    let mut engine = dual_role_engine();
+
+    assert_eq!(engine.handle(press("space")), Decision::Suppress);
+    assert_eq!(
+        engine.handle(Input::Key {
+            key: key("space"),
+            kind: EventKind::Down,
+            repeat: true,
+        }),
+        Decision::Suppress
+    );
+    assert_eq!(
+        engine.handle(release("space")),
+        Decision::Trigger(Action::SendKeys("space".parse().unwrap()))
+    );
+    assert_eq!(engine.handle(release("space")), Decision::Suppress);
+}
+
+#[test]
+fn dual_role_hold_triggers_binding_without_tap() {
+    let mut engine = dual_role_engine();
+
+    assert_eq!(engine.handle(press("space")), Decision::Suppress);
+    assert_eq!(
+        engine.handle(press("f")),
+        Decision::Trigger(Action::LaunchApp("Finder".into()))
+    );
+    assert_eq!(
+        engine.handle(Input::Key {
+            key: key("f"),
+            kind: EventKind::Down,
+            repeat: true,
+        }),
+        Decision::Suppress
+    );
+    assert_eq!(engine.handle(release("f")), Decision::Suppress);
+    assert_eq!(engine.handle(release("space")), Decision::Suppress);
+}
+
+#[test]
+fn unmapped_named_hold_layer_passes_secondary_key_unchanged() {
+    let mut engine = dual_role_engine();
+
+    assert_eq!(engine.handle(press("space")), Decision::Suppress);
+    assert_eq!(engine.handle(press("b")), Decision::Pass);
+    assert!(!engine.is_idle());
+    assert_eq!(engine.handle(release("space")), Decision::Suppress);
+    assert!(engine.is_idle());
+    assert_eq!(engine.handle(release("b")), Decision::Pass);
+    assert!(engine.is_idle());
+}
+
+#[test]
+fn nested_hyper_and_dual_role_match_both_virtual_modifiers() {
+    let mut engine = dual_role_engine();
+
+    assert_eq!(engine.handle(press("caps_lock")), Decision::Suppress);
+    assert_eq!(engine.handle(press("space")), Decision::Suppress);
+    assert_eq!(
+        engine.handle(press("t")),
+        Decision::Trigger(Action::LaunchApp("Terminal".into()))
+    );
+    assert_eq!(engine.handle(release("t")), Decision::Suppress);
+    assert_eq!(engine.handle(release("space")), Decision::Suppress);
+    assert_eq!(engine.handle(release("caps_lock")), Decision::Suppress);
+    assert!(engine.is_idle());
+}
+
+#[test]
+fn dual_role_preview_contains_named_and_nested_virtual_modifiers() {
+    let mut engine = dual_role_engine();
+
+    engine.handle(press("space"));
+    assert_eq!(
+        engine.preview_chord(&press("f")).unwrap().to_string(),
+        "leader+f"
+    );
+    engine.handle(press("caps_lock"));
+    assert_eq!(
+        engine.preview_chord(&press("t")).unwrap().to_string(),
+        "hyper+leader+t"
+    );
+}
+
+#[test]
+fn replacing_config_changes_dual_roles_at_an_idle_boundary() {
+    let replacement = Config::from_toml(
+        r#"
+        [[dual_role]]
+        key = "tab"
+        tap = "escape"
+        hold_modifier = "nav"
+
+        [bindings]
+        "nav+h" = { app = "Replacement" }
+        "#,
+    )
+    .unwrap()
+    .compile()
+    .unwrap();
+    let mut engine = dual_role_engine();
+
+    engine.replace_config(replacement);
+    assert_eq!(engine.handle(press("space")), Decision::Pass);
+    assert_eq!(engine.handle(release("space")), Decision::Pass);
+    assert_eq!(engine.handle(press("tab")), Decision::Suppress);
+    assert_eq!(
+        engine.handle(press("h")),
+        Decision::Trigger(Action::LaunchApp("Replacement".into()))
+    );
+}
+
+#[test]
+fn physical_modifiers_held_before_dual_role_down_compose_into_tap() {
+    for modifier in [Modifier::Command, Modifier::Shift] {
+        let mut engine = dual_role_engine();
+        assert_eq!(
+            engine.handle(Input::Modifier {
+                modifier: modifier.clone(),
+                kind: EventKind::Down,
+            }),
+            Decision::Pass
+        );
+        assert_eq!(engine.handle(press("space")), Decision::Suppress);
+        assert_eq!(
+            engine.handle(release("space")),
+            Decision::Trigger(Action::SendKeys(kiwi_keymapper::key::Chord::new(
+                vec![modifier],
+                key("space"),
+            )))
+        );
+    }
+}
+
+#[test]
+fn physical_modifier_pressed_after_dual_role_down_suppresses_tap() {
+    let mut engine = dual_role_engine();
+
+    engine.handle(press("space"));
+    engine.handle(Input::Modifier {
+        modifier: Modifier::Shift,
+        kind: EventKind::Down,
+    });
+    engine.handle(Input::Modifier {
+        modifier: Modifier::Shift,
+        kind: EventKind::Up,
+    });
+
+    assert_eq!(engine.handle(release("space")), Decision::Suppress);
+}
+
+#[test]
+fn two_active_dual_roles_match_both_named_modifiers() {
+    let mut engine = nested_dual_role_engine();
+
+    engine.handle(press("space"));
+    engine.handle(press("tab"));
+    assert_eq!(
+        engine.preview_chord(&press("f")).unwrap().to_string(),
+        "leader+nav+f"
+    );
+    assert_eq!(
+        engine.handle(press("f")),
+        Decision::Trigger(Action::LaunchApp("Both".into()))
+    );
+    assert_eq!(engine.handle(release("f")), Decision::Suppress);
+    assert_eq!(engine.handle(release("tab")), Decision::Suppress);
+    assert_eq!(engine.handle(release("space")), Decision::Suppress);
+}
+
+#[test]
+fn inner_dual_role_can_tap_but_marks_outer_used() {
+    let mut engine = nested_dual_role_engine();
+
+    engine.handle(Input::Modifier {
+        modifier: Modifier::Shift,
+        kind: EventKind::Down,
+    });
+    engine.handle(press("space"));
+    engine.handle(press("tab"));
+    assert_eq!(
+        engine.handle(release("tab")),
+        Decision::Trigger(Action::SendKeys("shift+tab".parse().unwrap()))
+    );
+    assert_eq!(engine.handle(release("space")), Decision::Suppress);
+}
+
+#[test]
+fn releasing_outer_dual_role_first_leaves_inner_layer_usable() {
+    let mut engine = nested_dual_role_engine();
+
+    engine.handle(press("space"));
+    engine.handle(press("tab"));
+    assert_eq!(engine.handle(release("space")), Decision::Suppress);
+    assert_eq!(
+        engine.handle(press("f")),
+        Decision::Trigger(Action::LaunchApp("Nav".into()))
+    );
+}
+
+#[test]
+fn hyper_then_dual_role_allows_inner_tap_and_marks_hyper_used() {
+    let mut engine = dual_role_engine();
+
+    engine.handle(press("caps_lock"));
+    engine.handle(press("space"));
+    assert_eq!(
+        engine.handle(release("space")),
+        Decision::Trigger(Action::SendKeys("space".parse().unwrap()))
+    );
+    assert_eq!(engine.handle(release("caps_lock")), Decision::Suppress);
+}
+
+#[test]
+fn dual_role_then_hyper_allows_inner_hyper_tap_and_marks_dual_role_used() {
+    let mut engine = dual_role_engine();
+
+    engine.handle(press("space"));
+    engine.handle(press("caps_lock"));
+    assert_eq!(
+        engine.handle(release("caps_lock")),
+        Decision::Trigger(Action::SendKeys("escape".parse().unwrap()))
+    );
+    assert_eq!(engine.handle(release("space")), Decision::Suppress);
+}
+
+#[test]
+fn replacing_config_clears_released_dual_role_bookkeeping() {
+    let mut engine = dual_role_engine();
+    engine.handle(press("space"));
+    engine.handle(release("space"));
+
+    let without_dual_role = Config::from_toml("").unwrap().compile().unwrap();
+    engine.replace_config(without_dual_role);
+    let readded = Config::from_toml(
+        r#"
+        [[dual_role]]
+        key = "space"
+        tap = "space"
+        hold_modifier = "leader"
+        "#,
+    )
+    .unwrap()
+    .compile()
+    .unwrap();
+    engine.replace_config(readded);
+
+    assert_eq!(engine.handle(release("space")), Decision::Pass);
+}
+
+#[test]
+fn lost_ordinary_key_up_does_not_permanently_block_idle_reload() {
+    let mut engine = dual_role_engine();
+
+    assert_eq!(engine.handle(press("b")), Decision::Pass);
+    assert!(engine.is_idle());
 }

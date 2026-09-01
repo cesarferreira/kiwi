@@ -62,7 +62,8 @@ pub fn find_conflicts(config: &CompiledConfig) -> Result<Vec<Conflict>> {
     let mut conflicts = Vec::new();
 
     for (shortcut, action) in &config.bindings {
-        let configured = Chord::from_str(shortcut)
+        let configured = config
+            .parse_chord(shortcut)
             .expect("compiled binding shortcuts are normalized valid chords");
         for (entry, catalog_chord) in &catalog {
             if catalog_matches(catalog_chord, &configured) {

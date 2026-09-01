@@ -34,9 +34,10 @@ impl FromStr for Key {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum Modifier {
     Hyper,
+    Named(String),
     Command,
     Control,
     Option,
@@ -53,9 +54,10 @@ pub enum Modifier {
 }
 
 impl Modifier {
-    pub fn as_str(self) -> &'static str {
+    pub fn as_str(&self) -> &str {
         match self {
             Self::Hyper => "hyper",
+            Self::Named(name) => name,
             Self::Command => "command",
             Self::Control => "control",
             Self::Option => "option",
@@ -72,7 +74,7 @@ impl Modifier {
         }
     }
 
-    fn rank(self) -> usize {
+    fn rank(&self) -> usize {
         match self {
             Self::Hyper => 0,
             Self::Command => 1,
@@ -88,10 +90,11 @@ impl Modifier {
             Self::LeftShift => 11,
             Self::RightShift => 12,
             Self::Function => 13,
+            Self::Named(_) => 14,
         }
     }
 
-    pub(crate) fn matches(self, physical: Self) -> bool {
+    pub(crate) fn matches(&self, physical: &Self) -> bool {
         self == physical
             || matches!(
                 (self, physical),
@@ -102,7 +105,7 @@ impl Modifier {
             )
     }
 
-    pub(crate) fn is_side_specific(self) -> bool {
+    pub(crate) fn is_side_specific(&self) -> bool {
         matches!(
             self,
             Self::LeftCommand
@@ -149,13 +152,38 @@ pub struct Chord {
 
 impl Chord {
     pub fn new(mut modifiers: Vec<Modifier>, key: Key) -> Self {
-        modifiers.sort_by_key(|modifier| modifier.rank());
+        modifiers.sort_by(|left, right| {
+            left.rank()
+                .cmp(&right.rank())
+                .then_with(|| left.as_str().cmp(right.as_str()))
+        });
         modifiers.dedup();
         Self { modifiers, key }
     }
 
-    pub fn has(&self, modifier: Modifier) -> bool {
-        self.modifiers.contains(&modifier)
+    pub fn has(&self, modifier: &Modifier) -> bool {
+        self.modifiers.contains(modifier)
+    }
+
+    pub(crate) fn parse_with_named(
+        value: &str,
+        named_modifiers: &std::collections::BTreeSet<String>,
+    ) -> Result<Self> {
+        let (modifier_parts, key) = chord_parts(value)?;
+        let modifiers = modifier_parts
+            .iter()
+            .map(|part| {
+                part.parse().or_else(|_| {
+                    let name = normalize_modifier_name(part);
+                    if named_modifiers.contains(&name) {
+                        Ok(Modifier::Named(name))
+                    } else {
+                        bail!("unknown modifier `{part}`")
+                    }
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Self::new(modifiers, key.parse()?))
     }
 }
 
@@ -163,14 +191,7 @@ impl FromStr for Chord {
     type Err = anyhow::Error;
 
     fn from_str(value: &str) -> Result<Self> {
-        let parts: Vec<_> = value.split('+').map(str::trim).collect();
-        let (key, modifier_parts) = parts
-            .split_last()
-            .ok_or_else(|| anyhow::anyhow!("key chord cannot be empty"))?;
-        if key.is_empty() {
-            bail!("key chord cannot end with `+`");
-        }
-
+        let (modifier_parts, key) = chord_parts(value)?;
         let modifiers = modifier_parts
             .iter()
             .map(|part| part.parse())
@@ -186,6 +207,21 @@ impl fmt::Display for Chord {
         }
         self.key.fmt(formatter)
     }
+}
+
+pub(crate) fn normalize_modifier_name(value: &str) -> String {
+    value.trim().to_ascii_lowercase().replace('-', "_")
+}
+
+fn chord_parts(value: &str) -> Result<(Vec<&str>, &str)> {
+    let mut parts: Vec<_> = value.split('+').map(str::trim).collect();
+    let key = parts
+        .pop()
+        .ok_or_else(|| anyhow::anyhow!("key chord cannot be empty"))?;
+    if key.is_empty() {
+        bail!("key chord cannot end with `+`");
+    }
+    Ok((parts, key))
 }
 
 fn normalize_key(value: &str) -> String {

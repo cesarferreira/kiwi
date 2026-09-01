@@ -8,7 +8,7 @@ use std::{
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
-use crate::key::{Chord, Key, Modifier};
+use crate::key::{Chord, Key, Modifier, normalize_modifier_name};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Action {
@@ -35,6 +35,8 @@ pub struct Config {
     #[serde(default)]
     pub hyper: HyperSpec,
     #[serde(default)]
+    pub dual_role: Vec<DualRoleSpec>,
+    #[serde(default)]
     pub bindings: BTreeMap<String, BindingSpec>,
 }
 
@@ -51,6 +53,22 @@ impl Config {
 
     pub fn compile(self) -> Result<CompiledConfig> {
         let hyper = self.hyper.compile()?;
+        let mut dual_roles = Vec::with_capacity(self.dual_role.len());
+        let mut dual_role_keys = std::collections::BTreeSet::new();
+        let mut named_modifiers = std::collections::BTreeSet::new();
+        for spec in self.dual_role {
+            let dual_role = spec.compile()?;
+            if dual_role.key == hyper.key {
+                bail!("dual-role key `{}` duplicates the hyper key", dual_role.key);
+            }
+            if !dual_role_keys.insert(dual_role.key.clone()) {
+                bail!("duplicate dual-role key `{}`", dual_role.key);
+            }
+            if !named_modifiers.insert(dual_role.hold_modifier.clone()) {
+                bail!("duplicate hold modifier `{}`", dual_role.hold_modifier);
+            }
+            dual_roles.push(dual_role);
+        }
         let mut bindings = BTreeMap::new();
         let mut compiled_bindings: HashMap<Key, Vec<(Chord, Action)>> = HashMap::new();
 
@@ -58,7 +76,7 @@ impl Config {
             if !binding.enabled {
                 continue;
             }
-            let chord = Chord::from_str(&source)
+            let chord = Chord::parse_with_named(&source, &named_modifiers)
                 .map_err(|error| anyhow::anyhow!("invalid binding `{source}`: {error:#}"))?;
             let normalized = chord.to_string();
             if bindings.contains_key(&normalized) {
@@ -76,6 +94,7 @@ impl Config {
 
         Ok(CompiledConfig {
             hyper,
+            dual_roles,
             bindings,
             compiled_bindings,
         })
@@ -85,11 +104,21 @@ impl Config {
 #[derive(Clone, Debug)]
 pub struct CompiledConfig {
     pub hyper: Hyper,
+    pub dual_roles: Vec<DualRole>,
     pub bindings: BTreeMap<String, Action>,
     compiled_bindings: HashMap<Key, Vec<(Chord, Action)>>,
 }
 
 impl CompiledConfig {
+    pub(crate) fn parse_chord(&self, source: &str) -> Result<Chord> {
+        let named_modifiers = self
+            .dual_roles
+            .iter()
+            .map(|role| role.hold_modifier.clone())
+            .collect();
+        Chord::parse_with_named(source, &named_modifiers)
+    }
+
     pub(crate) fn action_for(&self, actual: &Chord) -> Option<&Action> {
         self.compiled_bindings
             .get(&actual.key)?
@@ -104,6 +133,54 @@ impl CompiledConfig {
             })
             .map(|(_, action)| action)
     }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DualRoleSpec {
+    pub key: String,
+    pub tap: String,
+    pub hold_modifier: String,
+}
+
+impl DualRoleSpec {
+    fn compile(self) -> Result<DualRole> {
+        let key = self.key.parse().context("invalid dual-role key")?;
+        let tap = self.tap.parse().context("invalid dual-role tap")?;
+        let hold_modifier = normalize_modifier_name(&self.hold_modifier);
+        let mut characters = hold_modifier.chars();
+        if !characters
+            .next()
+            .is_some_and(|value| value.is_ascii_alphabetic())
+            || !characters.all(|value| value.is_ascii_alphanumeric() || value == '_')
+        {
+            bail!(
+                "dual-role hold modifier `{}` is not a valid modifier name",
+                self.hold_modifier
+            );
+        }
+        if hold_modifier == "hyper" {
+            bail!("dual-role hold modifier `hyper` is reserved");
+        }
+        if Modifier::from_str(&hold_modifier).is_ok() {
+            bail!("dual-role hold modifier `{hold_modifier}` collides with a physical modifier");
+        }
+        if Key::from_str(&hold_modifier).is_ok() {
+            bail!("dual-role hold modifier `{hold_modifier}` collides with a physical key");
+        }
+        Ok(DualRole {
+            key,
+            tap,
+            hold_modifier,
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct DualRole {
+    pub key: Key,
+    pub tap: Chord,
+    pub hold_modifier: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -197,7 +274,7 @@ impl BindingSpec {
         }
         let keys = self.keys.expect("exactly one action was present");
         let chord: Chord = keys.parse().context("invalid `keys` action")?;
-        if chord.has(Modifier::Hyper) {
+        if chord.has(&Modifier::Hyper) {
             bail!("a `keys` action cannot emit the virtual `hyper` modifier");
         }
         Ok(Action::SendKeys(chord))
@@ -221,12 +298,12 @@ pub(crate) fn chord_matches(binding: &Chord, actual: &Chord) -> bool {
             actual
                 .modifiers
                 .iter()
-                .any(|physical| wanted.matches(*physical))
+                .any(|physical| wanted.matches(physical))
         })
         && actual.modifiers.iter().all(|physical| {
             binding
                 .modifiers
                 .iter()
-                .any(|wanted| wanted.matches(*physical))
+                .any(|wanted| wanted.matches(physical))
         })
 }

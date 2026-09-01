@@ -16,6 +16,68 @@ fn compiled(binding: &str) -> kiwi_keymapper::config::CompiledConfig {
 }
 
 #[test]
+fn named_virtual_modifier_bindings_do_not_crash_conflict_reporting() {
+    let config = Config::from_toml(
+        r#"
+        [[dual_role]]
+        key = "space"
+        tap = "space"
+        hold_modifier = "leader"
+
+        [bindings]
+        "leader+f" = { app = "Finder" }
+        "#,
+    )
+    .unwrap()
+    .compile()
+    .unwrap();
+
+    assert!(find_conflicts(&config).unwrap().is_empty());
+}
+
+#[test]
+fn named_virtual_modifier_does_not_match_physical_command_conflict() {
+    let config = Config::from_toml(
+        r#"
+        [[dual_role]]
+        key = "tab"
+        tap = "tab"
+        hold_modifier = "leader"
+
+        [bindings]
+        "leader+space" = { app = "Finder" }
+        "#,
+    )
+    .unwrap()
+    .compile()
+    .unwrap();
+
+    assert!(find_conflicts(&config).unwrap().is_empty());
+}
+
+#[test]
+fn physical_command_conflict_still_matches_with_dual_role_configured() {
+    let config = Config::from_toml(
+        r#"
+        [[dual_role]]
+        key = "tab"
+        tap = "tab"
+        hold_modifier = "leader"
+
+        [bindings]
+        "command+space" = { app = "Finder" }
+        "#,
+    )
+    .unwrap()
+    .compile()
+    .unwrap();
+
+    let conflicts = find_conflicts(&config).unwrap();
+    assert_eq!(conflicts.len(), 1);
+    assert_eq!(conflicts[0].label, "Spotlight");
+}
+
+#[test]
 fn bundled_catalog_parses_and_covers_required_sources() {
     let catalog = catalog().unwrap();
     let sources: std::collections::BTreeSet<_> =
