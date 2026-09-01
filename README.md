@@ -106,6 +106,8 @@ modifiers = ["command", "control", "option", "shift"]
 [ui]
 feedback = "errors"
 style = "notification"
+cheatsheet = false
+cheatsheet_delay_ms = 300
 
 [bindings]
 "hyper+t" = { app = "Ghostty" }
@@ -127,6 +129,8 @@ modifiers = ["command", "control", "option", "shift"]
 [ui]
 feedback = "errors"
 style = "notification"
+cheatsheet = false
+cheatsheet_delay_ms = 300
 
 [bindings]
 # Launch or focus an application by name (the default behavior).
@@ -199,18 +203,28 @@ as a separate shortcut.
 
 ### `[ui]`
 
-The optional `[ui]` table controls macOS notifications after actions:
+The optional `[ui]` table controls action notifications and the Hyper
+cheatsheet overlay:
 
 ```toml
 [ui]
 feedback = "errors"
 style = "notification"
+cheatsheet = false
+cheatsheet_delay_ms = 300
 ```
 
 | Field | Values | Default |
 |---|---|---|
 | `feedback` | `"off"`, `"errors"`, or `"all"` | `"errors"` |
 | `style` | `"notification"` | `"notification"` |
+| `cheatsheet` | `true` or `false` | `false` |
+| `cheatsheet_delay_ms` | `0` through `5000` | `300` |
+
+With `cheatsheet = true`, `kiwi validate` rejects more than 64 enabled Hyper
+bindings so the overlay can show every one. Each displayed key, type, and
+action is truncated to 160 characters. Maps larger than 64 Hyper bindings
+remain valid when the cheatsheet is off.
 
 `errors` reports failed app, URL, command, and key actions. `all` also reports
 successful actions, while `off` disables action feedback. Notifications show
@@ -222,7 +236,21 @@ notification text is passed as arguments and is not inserted into script
 source. Depending on the macOS version, notifications may be attributed to
 `osascript` or macOS rather than Kiwi and may need to be enabled in **System
 Settings → Notifications**. This is a system notification, not a custom HUD.
-Changes to `[ui]` reload at the same idle key boundary as bindings.
+The cheatsheet is separate: when enabled, holding Hyper past the configured
+delay opens a native, high-contrast panel listing every enabled Hyper binding's
+key, type, and action (all of them, up to the 64-binding limit). Hyper+Shift
+and other residual modifiers are shown with the key. The panel is non-activating
+and ignores mouse events, so it neither
+takes keyboard focus nor intercepts clicks. It is placed near the top center of
+the primary, menu-bar macOS screen and disappears immediately when Hyper is
+released. As a stuck-key safeguard, it also closes after 30 seconds and will
+not reopen until Hyper is released and pressed again.
+
+Version 1 opens the cheatsheet only for the `[hyper]` key. Ordinary physical
+modifiers and additional `[[dual_role]]` keys do not open it, and non-Hyper
+bindings are omitted. A quick chord or release before `cheatsheet_delay_ms`
+cancels the pending panel to avoid flashing. Changes to `[ui]` and bindings
+reload at the same idle key boundary and appear on the next Hyper hold.
 
 ### `[bindings]`
 
@@ -654,9 +682,13 @@ with a stable signature and refreshes the LaunchAgent.
 4. Matching chords dispatch their action on a worker thread so slow commands do
    not block keyboard input. Notifications use a separate worker so notification
    delivery cannot delay later actions or their failure logs.
-5. An event-driven watcher compiles config edits off the keyboard callback and
+5. Hyper layer transitions go to a dedicated worker. After the configured
+   delay, it starts the same Kiwi binary in a hidden helper mode and sends a
+   bounded JSON model over stdin. AppKit and its main run loop therefore stay
+   out of the event-tap process; release kills and waits for the helper.
+6. An event-driven watcher compiles config edits off the keyboard callback and
    swaps in only valid, compatible changes at an idle key boundary.
-6. A per-user LaunchAgent starts the daemon at login and restarts it if needed.
+7. A per-user LaunchAgent starts the daemon at login and restarts it if needed.
 
 The LaunchAgent is stored at
 `~/Library/LaunchAgents/io.github.cesarferreira.kiwi.plist`.

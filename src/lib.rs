@@ -14,6 +14,8 @@ modifiers = ["command", "control", "option", "shift"]
 [ui]
 feedback = "errors"
 style = "notification"
+cheatsheet = false
+cheatsheet_delay_ms = 300
 
 [bindings]
 "hyper+t" = { app = "Ghostty" }

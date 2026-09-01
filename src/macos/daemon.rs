@@ -33,10 +33,11 @@ use crate::{
 
 use super::{
     app_controller::{AppController, MacOsAppController},
+    cheatsheet::{CheatsheetCommand, worker as cheatsheet_worker},
     events::{EventDecoder, SYNTHETIC_EVENT_TAG},
     feedback::{ActionJob, MacOsNotifier, Notification, Notifier, action_completion},
     key_to_keycode,
-    runtime::{ReloadNotice, ReloadingEngine},
+    runtime::{HyperLayerTransition, ReloadNotice, ReloadingEngine},
 };
 
 const CAPS_TO_F18_MAPPING: &str = r#"{"UserKeyMapping":[{"HIDKeyboardModifierMappingSrc":0x700000039,"HIDKeyboardModifierMappingDst":0x70000006D}]}"#;
@@ -74,6 +75,11 @@ pub fn run_event_tap(config_path: &Path, config: CompiledConfig) -> Result<()> {
     let tap_port = Arc::new(AtomicPtr::<c_void>::new(std::ptr::null_mut()));
     let (action_sender, action_receiver) = mpsc::channel();
     let (notification_sender, notification_receiver) = mpsc::channel();
+    let (cheatsheet_sender, cheatsheet_receiver) = mpsc::channel();
+    thread::Builder::new()
+        .name("kiwi-cheatsheet".into())
+        .spawn(move || cheatsheet_worker(cheatsheet_receiver))
+        .context("could not start cheatsheet worker")?;
     thread::Builder::new()
         .name("kiwi-notifications".into())
         .spawn(move || notification_worker(notification_receiver, MacOsNotifier))
@@ -122,6 +128,22 @@ pub fn run_event_tap(config_path: &Path, config: CompiledConfig) -> Result<()> {
                 Err(_) => return CallbackResult::Keep,
             };
             report_reload_notices(&callback_config_path, &handled.notices);
+            if let Some(transition) = handled.hyper_layer {
+                let command = match transition {
+                    HyperLayerTransition::Show {
+                        rows,
+                        generation,
+                        delay_ms,
+                    } => CheatsheetCommand::Show {
+                        model: super::cheatsheet::CheatsheetModel { generation, rows },
+                        delay_ms,
+                    },
+                    HyperLayerTransition::Hide => CheatsheetCommand::Hide,
+                };
+                if let Err(error) = cheatsheet_sender.send(command) {
+                    eprintln!("kiwi cheatsheet worker stopped: {error}");
+                }
+            }
             apply_decision(
                 handled.decision,
                 handled.action_job,
