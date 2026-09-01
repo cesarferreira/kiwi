@@ -18,6 +18,7 @@ use core_graphics::event::{
     CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType,
     CallbackResult, EventField,
 };
+use serde::Serialize;
 
 use crate::{
     config::{Action, CompiledConfig},
@@ -37,7 +38,12 @@ unsafe extern "C" {
     fn CGEventTapEnable(tap: CFMachPortRef, enable: bool);
 }
 
-pub fn listen_event_tap(config_path: &Path, config: CompiledConfig, color: bool) -> Result<()> {
+pub fn listen_event_tap(
+    config_path: &Path,
+    config: CompiledConfig,
+    color: bool,
+    json: bool,
+) -> Result<()> {
     if !accessibility_is_trusted() {
         bail!(
             "Accessibility permission is required for `kiwi listen`; add kiwi in System Settings > Privacy & Security > Accessibility"
@@ -92,17 +98,22 @@ pub fn listen_event_tap(config_path: &Path, config: CompiledConfig, color: bool)
             };
             report_reload_notices(&callback_config_path, &handled.notices);
 
-            if let Some(line) = observation_for(&handled, color) {
-                if let Err(error) = writeln!(
-                    io::stdout().lock(),
-                    "{line}"
-                ) {
-                    if error.kind() != io::ErrorKind::BrokenPipe {
-                        eprintln!("kiwi listen output failed: {error}");
-                        callback_output_failed.store(true, Ordering::Relaxed);
+            match observation_for(&handled, color, json) {
+                Ok(Some(line)) => {
+                    if let Err(error) = write_observation_line(&mut io::stdout().lock(), &line) {
+                        if error.kind() != io::ErrorKind::BrokenPipe {
+                            eprintln!("kiwi listen output failed: {error}");
+                            callback_output_failed.store(true, Ordering::Relaxed);
+                        }
+                        CFRunLoop::get_current().stop();
                     }
+                }
+                Err(error) => {
+                    eprintln!("kiwi listen output failed: {error}");
+                    callback_output_failed.store(true, Ordering::Relaxed);
                     CFRunLoop::get_current().stop();
                 }
+                Ok(None) => {}
             }
             CallbackResult::Keep
         },
@@ -136,13 +147,48 @@ pub fn listen_event_tap(config_path: &Path, config: CompiledConfig, color: bool)
     Ok(())
 }
 
-fn observation_for(handled: &HandledEvent, color: bool) -> Option<String> {
-    let chord = handled.chord.as_ref()?;
+fn write_observation_line(writer: &mut impl Write, line: &str) -> io::Result<()> {
+    writeln!(writer, "{line}")?;
+    writer.flush()
+}
+
+fn observation_for(handled: &HandledEvent, color: bool, json: bool) -> Result<Option<String>> {
+    let Some(chord) = handled.chord.as_ref() else {
+        return Ok(None);
+    };
     let action = match &handled.decision {
         Decision::Trigger(action) => Some(action),
         _ => None,
     };
-    Some(observation_line(&chord.to_string(), action, color))
+    if json {
+        Ok(Some(observation_json(&chord.to_string(), action)?))
+    } else {
+        Ok(Some(observation_line(&chord.to_string(), action, color)))
+    }
+}
+
+#[derive(Serialize)]
+struct ObservationOutput<'a> {
+    schema_version: u8,
+    shortcut: &'a str,
+    matched: bool,
+    #[serde(rename = "type")]
+    kind: Option<&'static str>,
+    action: Option<String>,
+}
+
+fn observation_json(shortcut: &str, action: Option<&Action>) -> serde_json::Result<String> {
+    let (kind, action) = action.map_or((None, None), |action| {
+        let (kind, value) = action.type_and_value();
+        (Some(kind), Some(value))
+    });
+    serde_json::to_string(&ObservationOutput {
+        schema_version: 1,
+        shortcut,
+        matched: kind.is_some(),
+        kind,
+        action,
+    })
 }
 
 fn observation_line(shortcut: &str, action: Option<&Action>, color: bool) -> String {
@@ -151,12 +197,7 @@ fn observation_line(shortcut: &str, action: Option<&Action>, color: bool) -> Str
         return format!("{shortcut}  {}", paint("unmatched", "33", color));
     };
 
-    let (kind, value) = match action {
-        Action::LaunchApp(value) => ("app", value.clone()),
-        Action::OpenUrl(value) => ("url", value.clone()),
-        Action::RunCommand(value) => ("command", value.clone()),
-        Action::SendKeys(value) => ("keys", value.to_string()),
-    };
+    let (kind, value) = action.type_and_value();
     format!(
         "{shortcut}  {}  {}  {value}",
         paint("matched", "32", color),
@@ -174,7 +215,10 @@ fn paint(value: &str, code: &str, color: bool) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::mpsc;
+    use std::{
+        io::{self, Write},
+        sync::mpsc,
+    };
 
     use super::{observation_for, observation_line};
     use crate::{
@@ -183,6 +227,29 @@ mod tests {
         key::{Key, Modifier},
         macos::runtime::ReloadingEngine,
     };
+
+    #[derive(Default)]
+    struct RecordingWriter {
+        written: Vec<u8>,
+        flushes: usize,
+        fail_flush: bool,
+    }
+
+    impl Write for RecordingWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.written.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.flushes += 1;
+            if self.fail_flush {
+                Err(io::Error::other("flush failed"))
+            } else {
+                Ok(())
+            }
+        }
+    }
 
     #[test]
     fn formats_every_matched_action_type() {
@@ -223,6 +290,35 @@ mod tests {
     }
 
     #[test]
+    fn formats_matched_observations_as_compact_json() {
+        let output = super::observation_json(
+            "hyper+p",
+            Some(&Action::RunCommand("printf '\u{1b}[31m'".into())),
+        )
+        .unwrap();
+
+        assert_eq!(
+            output,
+            concat!(
+                "{\"schema_version\":1,\"shortcut\":\"hyper+p\",\"matched\":true,",
+                "\"type\":\"command\",\"action\":\"printf '\\u001b[31m'\"}"
+            )
+        );
+        assert!(!output.contains('\u{1b}'));
+    }
+
+    #[test]
+    fn formats_unmatched_observations_as_compact_json_with_null_action_fields() {
+        assert_eq!(
+            super::observation_json("hyper+z", None).unwrap(),
+            concat!(
+                "{\"schema_version\":1,\"shortcut\":\"hyper+z\",\"matched\":false,",
+                "\"type\":null,\"action\":null}"
+            )
+        );
+    }
+
+    #[test]
     fn colors_each_semantic_field_when_requested() {
         assert_eq!(
             observation_line("hyper+p", Some(&Action::RunCommand("echo hi".into())), true,),
@@ -236,6 +332,29 @@ mod tests {
             observation_line("hyper+z", None, true),
             "\u{1b}[36mhyper+z\u{1b}[0m  \u{1b}[33munmatched\u{1b}[0m"
         );
+    }
+
+    #[test]
+    fn writes_each_observation_and_flushes_immediately() {
+        let mut writer = RecordingWriter::default();
+
+        super::write_observation_line(&mut writer, "hyper+t  matched  app  Ghostty").unwrap();
+
+        assert_eq!(writer.written, b"hyper+t  matched  app  Ghostty\n");
+        assert_eq!(writer.flushes, 1);
+    }
+
+    #[test]
+    fn treats_flush_failures_like_write_failures() {
+        let mut writer = RecordingWriter {
+            fail_flush: true,
+            ..RecordingWriter::default()
+        };
+
+        let error = super::write_observation_line(&mut writer, "hyper+z  unmatched").unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::Other);
+        assert_eq!(writer.flushes, 1);
     }
 
     #[test]
@@ -262,7 +381,7 @@ mod tests {
 
         for input in inputs {
             let handled = runtime.observe(input);
-            assert_eq!(observation_for(&handled, false), None);
+            assert_eq!(observation_for(&handled, false, false).unwrap(), None);
         }
     }
 }

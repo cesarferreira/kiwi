@@ -441,25 +441,38 @@ output is plain text. Repeats, releases, modifier-only events, Kiwi-generated
 synthetic keys, and a Hyper tap by itself are omitted. The listener uses the
 same automatic reload behavior as the daemon.
 
+For compact newline-delimited JSON, run `kiwi --format json listen`. Each
+observation is one object on stdout:
+
+```json
+{"schema_version":1,"shortcut":"hyper+t","matched":true,"type":"app","action":"Ghostty"}
+{"schema_version":1,"shortcut":"hyper+z","matched":false,"type":null,"action":null}
+```
+
+Config reload notices remain on stderr.
+
 ## Commands
 
-The global `--config <PATH>` option selects a non-default configuration for any
-command.
+Global options:
+
+- `--config <PATH>` selects a non-default configuration.
+- `--format text|json` selects output format and defaults to `text`. JSON is
+  available for `list`, `listen`, and `status`.
 
 | Command | Purpose |
 |---|---|
 | `kiwi init` | Create the default config if it does not exist |
 | `kiwi init --force` | Replace the config with the generated default |
 | `kiwi validate` | Parse and validate the selected config |
-| `kiwi list` | Print enabled shortcuts as a colored table |
+| `kiwi list` | Print enabled shortcuts as a colored table, or one JSON object |
 | `kiwi run` | Run the daemon in the foreground |
-| `kiwi listen` | Show resolved shortcuts without executing actions |
+| `kiwi listen` | Show resolved shortcuts without executing actions; JSON is NDJSON |
 | `kiwi install` | Validate, stably sign, install, and start the LaunchAgent |
 | `kiwi start` | Start an installed LaunchAgent |
 | `kiwi stop` | Stop the LaunchAgent and restore Caps Lock without uninstalling |
 | `kiwi uninstall` | Stop and remove the LaunchAgent and owned HID mapping |
 | `kiwi restart` | Restart the installed LaunchAgent |
-| `kiwi status` | Print a concise LaunchAgent status summary |
+| `kiwi status` | Print a concise LaunchAgent status summary, or one JSON object |
 | `kiwi doctor` | Check config, signing, Accessibility, and LaunchAgent health |
 | `kiwi permissions` | Open macOS Accessibility settings |
 | `kiwi config-path` | Print the active config path |
@@ -468,6 +481,13 @@ Use `kiwi run` while developing to keep logs in the terminal. Stop the
 installed agent first if necessary so two daemons do not process the same
 shortcut. `kiwi listen` is read-only and is designed to run alongside either
 one.
+
+JSON output uses schema version 1 and never includes terminal color escapes:
+
+```sh
+kiwi --format json list
+kiwi --format json status
+```
 
 ## Installation workflows
 

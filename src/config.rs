@@ -18,6 +18,17 @@ pub enum Action {
     SendKeys(Chord),
 }
 
+impl Action {
+    pub fn type_and_value(&self) -> (&'static str, String) {
+        match self {
+            Self::LaunchApp(value) => ("app", value.clone()),
+            Self::OpenUrl(value) => ("url", value.clone()),
+            Self::RunCommand(value) => ("command", value.clone()),
+            Self::SendKeys(value) => ("keys", value.to_string()),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
