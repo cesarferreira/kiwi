@@ -2,7 +2,7 @@
 mod cli;
 
 #[cfg(target_os = "macos")]
-fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<std::process::ExitCode> {
     cli::run()
 }
 

@@ -1,0 +1,163 @@
+# Curated defaults only. Applications and users can override these shortcuts.
+
+[[shortcuts]]
+chord = "command+space"
+source = "macos"
+label = "Spotlight"
+url = "https://support.apple.com/guide/mac-help/keyboard-shortcuts-mchlp2262/mac"
+
+[[shortcuts]]
+chord = "command+tab"
+source = "macos"
+label = "Application switcher"
+url = "https://support.apple.com/guide/mac-help/keyboard-shortcuts-mchlp2262/mac"
+
+[[shortcuts]]
+chord = "command+shift+3"
+source = "macos"
+label = "Screenshot entire screen"
+url = "https://support.apple.com/guide/mac-help/take-a-screenshot-mh26782/mac"
+
+[[shortcuts]]
+chord = "command+shift+4"
+source = "macos"
+label = "Screenshot selection"
+url = "https://support.apple.com/guide/mac-help/take-a-screenshot-mh26782/mac"
+
+[[shortcuts]]
+chord = "command+shift+5"
+source = "macos"
+label = "Screenshot and recording controls"
+url = "https://support.apple.com/guide/mac-help/take-a-screenshot-mh26782/mac"
+
+[[shortcuts]]
+chord = "control+up"
+source = "macos"
+label = "Mission Control"
+url = "https://support.apple.com/guide/mac-help/work-in-multiple-spaces-mh14112/mac"
+
+[[shortcuts]]
+chord = "control+down"
+source = "macos"
+label = "Application windows"
+url = "https://support.apple.com/guide/mac-help/work-in-multiple-spaces-mh14112/mac"
+
+[[shortcuts]]
+chord = "fn+d"
+source = "macos"
+label = "Start Dictation"
+url = "https://support.apple.com/guide/mac-help/use-dictation-mh40584/mac"
+
+[[shortcuts]]
+chord = "command+option+escape"
+source = "macos"
+label = "Force Quit Applications"
+url = "https://support.apple.com/guide/mac-help/keyboard-shortcuts-mchlp2262/mac"
+
+[[shortcuts]]
+chord = "command+h"
+source = "macos"
+label = "Hide front application"
+url = "https://support.apple.com/guide/mac-help/keyboard-shortcuts-mchlp2262/mac"
+
+[[shortcuts]]
+chord = "command+control+q"
+source = "macos"
+label = "Lock screen"
+url = "https://support.apple.com/guide/mac-help/keyboard-shortcuts-mchlp2262/mac"
+
+[[shortcuts]]
+chord = "command+option+f5"
+source = "macos"
+label = "Accessibility Shortcuts panel"
+url = "https://support.apple.com/guide/mac-help/accessibility-shortcuts-mh35799/mac"
+
+[[shortcuts]]
+chord = "command+l"
+source = "safari"
+label = "Select Smart Search field"
+
+[[shortcuts]]
+chord = "command+t"
+source = "safari"
+label = "New tab"
+
+[[shortcuts]]
+chord = "command+shift+left_bracket"
+source = "safari"
+label = "Previous tab"
+
+[[shortcuts]]
+chord = "command+l"
+source = "chrome"
+label = "Focus address bar"
+
+[[shortcuts]]
+chord = "command+t"
+source = "chrome"
+label = "New tab"
+
+[[shortcuts]]
+chord = "command+shift+n"
+source = "chrome"
+label = "New Incognito window"
+
+[[shortcuts]]
+chord = "command+n"
+source = "finder"
+label = "New Finder window"
+
+[[shortcuts]]
+chord = "command+shift+g"
+source = "finder"
+label = "Go to Folder"
+
+[[shortcuts]]
+chord = "command+delete"
+source = "finder"
+label = "Move selected item to Trash"
+
+[[shortcuts]]
+chord = "control+a"
+source = "terminal"
+label = "Readline beginning of line"
+
+[[shortcuts]]
+chord = "control+e"
+source = "terminal"
+label = "Readline end of line"
+
+[[shortcuts]]
+chord = "control+r"
+source = "terminal"
+label = "Readline reverse history search"
+
+[[shortcuts]]
+chord = "command+n"
+source = "ghostty"
+label = "New window"
+
+[[shortcuts]]
+chord = "command+t"
+source = "ghostty"
+label = "New tab"
+
+[[shortcuts]]
+chord = "command+shift+p"
+source = "ghostty"
+label = "Command palette"
+
+[[shortcuts]]
+chord = "command+k"
+source = "slack"
+label = "Jump to conversation"
+
+[[shortcuts]]
+chord = "command+shift+a"
+source = "slack"
+label = "All unreads"
+
+[[shortcuts]]
+chord = "command+slash"
+source = "slack"
+label = "Keyboard shortcuts"

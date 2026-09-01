@@ -215,7 +215,7 @@ fn require_nonempty(field: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
-fn chord_matches(binding: &Chord, actual: &Chord) -> bool {
+pub(crate) fn chord_matches(binding: &Chord, actual: &Chord) -> bool {
     binding.key == actual.key
         && binding.modifiers.iter().all(|wanted| {
             actual

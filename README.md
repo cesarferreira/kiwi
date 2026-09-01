@@ -465,6 +465,7 @@ Global options:
 | `kiwi init --force` | Replace the config with the generated default |
 | `kiwi validate` | Parse and validate the selected config |
 | `kiwi list` | Print enabled shortcuts as a colored table, or one JSON object |
+| `kiwi list --conflicts` | Report enabled shortcuts that collide with curated common defaults |
 | `kiwi run` | Run the daemon in the foreground |
 | `kiwi listen` | Show resolved shortcuts without executing actions; JSON is NDJSON |
 | `kiwi install` | Validate, stably sign, install, and start the LaunchAgent |
@@ -487,6 +488,26 @@ JSON output uses schema version 1 and never includes terminal color escapes:
 ```sh
 kiwi --format json list
 kiwi --format json status
+```
+
+### Shortcut conflict report
+
+`kiwi list --conflicts` compares each enabled configured triggering chord with
+the bundled catalog of common macOS, Safari, Chrome, Finder, terminal/readline,
+Ghostty, and Slack defaults. Generic catalog modifiers match side-specific
+bindings, so `command+space` also detects `left_command+space`.
+
+The report is a heuristic, non-exhaustive diagnostic: application shortcuts can
+be customized, defaults can change, and Kiwi does not inspect the frontmost
+application or system preferences. Version 1 compares only the configured
+triggering chord. It does not expand Hyper or inspect keys emitted by an action.
+
+The command exits with status 1 when conflicts are found and 0 when none are
+found. JSON mode adds a `conflicts` array only for the conflict report:
+
+```sh
+kiwi --format json list --conflicts
+kiwi list --conflicts --format json
 ```
 
 ## Installation workflows
