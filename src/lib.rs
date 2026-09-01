@@ -1,4 +1,5 @@
 pub mod config;
+pub mod conflicts;
 pub mod engine;
 pub mod key;
 

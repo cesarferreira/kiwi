@@ -1,4 +1,8 @@
-use std::{fs, process::Command};
+use std::{
+    fs,
+    process::Command,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 use kiwi_keymapper::config::Config;
 
@@ -197,4 +201,184 @@ fn help_exposes_the_listen_command() {
 
     assert!(output.status.success());
     assert!(stdout.contains("  listen"));
+}
+
+fn run_conflicts(config: &str, arguments: &[&str]) -> (std::path::PathBuf, std::process::Output) {
+    static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
+    let path = std::env::temp_dir().join(format!(
+        "kiwi-conflicts-test-{}-{}.toml",
+        std::process::id(),
+        NEXT_ID.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::write(&path, config).unwrap();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_kiwi"));
+    command.args(["--config", path.to_str().unwrap()]);
+    command.args(arguments);
+    let output = command.output().unwrap();
+    fs::remove_file(&path).unwrap();
+    (path, output)
+}
+
+#[test]
+fn list_conflicts_prints_an_aligned_table_and_exits_one() {
+    let (_, output) = run_conflicts(
+        r#"
+[bindings]
+"command+space" = { app = "Finder" }
+"command+shift+3" = { command = "capture" }
+"command+tab" = { app = "Disabled", enabled = false }
+"hyper+t" = { keys = "command+space" }
+"#,
+        &["list", "--conflicts"],
+    );
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stderr.is_empty());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        concat!(
+            "2 conflicts\n",
+            "\n",
+            "SHORTCUT         TYPE     ACTION   CONFLICTS WITH\n",
+            "command+shift+3  command  capture  macOS Screenshot entire screen\n",
+            "command+space    app      Finder   macOS Spotlight\n",
+        )
+    );
+}
+
+#[test]
+fn list_conflicts_matches_side_specific_physical_binding() {
+    let (_, output) = run_conflicts(
+        r#"
+[bindings]
+"left_command+space" = { app = "Finder" }
+"#,
+        &["list", "--conflicts"],
+    );
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .contains("left_command+space")
+    );
+}
+
+#[test]
+fn list_conflicts_exits_zero_when_there_are_no_hits() {
+    let (_, output) = run_conflicts(
+        r#"
+[bindings]
+"hyper+t" = { app = "Ghostty" }
+"command+space" = { app = "Disabled", enabled = false }
+"#,
+        &["list", "--conflicts"],
+    );
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "No shortcut conflicts found.\n"
+    );
+}
+
+#[test]
+fn json_list_conflicts_adds_a_stable_conflicts_array_to_the_list_object() {
+    let (path, output) = run_conflicts(
+        r#"
+[hyper]
+key = "f19"
+tap = "escape"
+modifiers = ["command", "option"]
+
+[bindings]
+"command+space" = { app = "Finder" }
+"#,
+        &["list", "--conflicts", "--format", "json"],
+    );
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stderr.is_empty());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        format!(
+            concat!(
+                "{{\"schema_version\":1,\"config_path\":\"{}\",",
+                "\"hyper\":{{\"key\":\"f19\",\"tap\":\"escape\",",
+                "\"modifiers\":[\"command\",\"option\"]}},",
+                "\"bindings\":[",
+                "{{\"shortcut\":\"command+space\",\"type\":\"app\",\"action\":\"Finder\"}}",
+                "],",
+                "\"conflicts\":[{{\"shortcut\":\"command+space\",\"type\":\"app\",",
+                "\"action\":\"Finder\",\"source\":\"macos\",\"label\":\"Spotlight\",",
+                "\"url\":\"https://support.apple.com/guide/mac-help/",
+                "keyboard-shortcuts-mchlp2262/mac\"}}]}}\n"
+            ),
+            path.display()
+        )
+    );
+}
+
+#[test]
+fn json_list_conflicts_reports_an_empty_array_and_exits_zero_without_hits() {
+    let (path, output) = run_conflicts(
+        r#"
+[hyper]
+key = "f19"
+tap = "escape"
+modifiers = ["command", "option"]
+
+[bindings]
+"hyper+t" = { app = "Ghostty" }
+"#,
+        &["list", "--conflicts", "--format", "json"],
+    );
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        format!(
+            concat!(
+                "{{\"schema_version\":1,\"config_path\":\"{}\",",
+                "\"hyper\":{{\"key\":\"f19\",\"tap\":\"escape\",",
+                "\"modifiers\":[\"command\",\"option\"]}},",
+                "\"bindings\":[",
+                "{{\"shortcut\":\"hyper+t\",\"type\":\"app\",\"action\":\"Ghostty\"}}",
+                "],\"conflicts\":[]}}\n"
+            ),
+            path.display()
+        )
+    );
+}
+
+#[test]
+fn ordinary_json_list_does_not_add_conflicts_array() {
+    let (_, output) = run_conflicts(
+        r#"
+[bindings]
+"command+space" = { app = "Finder" }
+"#,
+        &["--format", "json", "list"],
+    );
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(json.get("conflicts").is_none());
+}
+
+#[test]
+fn list_help_documents_the_conflicts_flag() {
+    let output = Command::new(env!("CARGO_BIN_EXE_kiwi"))
+        .args(["list", "--help"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .contains("--conflicts")
+    );
 }

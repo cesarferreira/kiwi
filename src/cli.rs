@@ -3,7 +3,7 @@ use std::{
     fs::{self, OpenOptions},
     io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
-    process::Command as ProcessCommand,
+    process::{Command as ProcessCommand, ExitCode},
 };
 
 use anyhow::{Context, Result, bail};
@@ -11,6 +11,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use kiwi_keymapper::{
     DEFAULT_CONFIG,
     config::{Action, Config},
+    conflicts::{Conflict, find_conflicts},
     macos::{
         LABEL, accessibility_is_trusted, launch_agent_plist, listen_event_tap, remove_caps_remap,
         run_event_tap,
@@ -51,7 +52,11 @@ enum Command {
     /// Validate the config without starting the daemon
     Validate,
     /// Print the configured shortcuts
-    List,
+    List {
+        /// Report enabled shortcuts that collide with curated common defaults
+        #[arg(long)]
+        conflicts: bool,
+    },
     /// Run the keyboard event daemon in the foreground
     Run,
     /// Show shortcuts as they are pressed without running actions
@@ -76,18 +81,24 @@ enum Command {
     ConfigPath,
 }
 
-pub fn run() -> Result<()> {
+pub fn run() -> Result<ExitCode> {
     let cli = Cli::parse();
     let config_path = cli.config.unwrap_or(default_config_path()?);
 
-    match cli.command {
+    let command = match cli.command {
+        Command::List { conflicts } => {
+            return list_shortcuts(&config_path, cli.format, conflicts);
+        }
+        command => command,
+    };
+    match command {
         Command::Init { force } => init_config(&config_path, force),
         Command::Validate => {
             load_config(&config_path)?;
             println!("config is valid: {}", config_path.display());
             Ok(())
         }
-        Command::List => list_shortcuts(&config_path, cli.format),
+        Command::List { .. } => unreachable!("list was extracted above"),
         Command::Run => run_event_tap(&config_path, load_config(&config_path)?),
         Command::Listen => listen_event_tap(
             &config_path,
@@ -118,23 +129,37 @@ pub fn run() -> Result<()> {
             println!("{}", config_path.display());
             Ok(())
         }
-    }
+    }?;
+    Ok(ExitCode::SUCCESS)
 }
 
 fn load_config(path: &Path) -> Result<kiwi_keymapper::config::CompiledConfig> {
     Config::from_path(path)?.compile()
 }
 
-fn list_shortcuts(config_path: &Path, format: Format) -> Result<()> {
+fn list_shortcuts(config_path: &Path, format: Format, conflicts_only: bool) -> Result<ExitCode> {
     let config = load_config(config_path)?;
+    if conflicts_only {
+        let conflicts = find_conflicts(&config)?;
+        match format {
+            Format::Text => print!("{}", conflicts_table(&conflicts)),
+            Format::Json => println!("{}", list_json(config_path, &config, Some(&conflicts))?),
+        }
+        return Ok(if conflicts.is_empty() {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        });
+    }
+
     match format {
         Format::Text => print!(
             "{}",
             shortcuts_table(&config.bindings, io::stdout().is_terminal())
         ),
-        Format::Json => println!("{}", list_json(config_path, &config)?),
+        Format::Json => println!("{}", list_json(config_path, &config, None)?),
     }
-    Ok(())
+    Ok(ExitCode::SUCCESS)
 }
 
 #[derive(Serialize)]
@@ -143,6 +168,8 @@ struct ListOutput<'a> {
     config_path: &'a Path,
     hyper: HyperOutput,
     bindings: Vec<BindingOutput<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    conflicts: Option<&'a [Conflict]>,
 }
 
 #[derive(Serialize)]
@@ -163,6 +190,7 @@ struct BindingOutput<'a> {
 fn list_json(
     config_path: &Path,
     config: &kiwi_keymapper::config::CompiledConfig,
+    conflicts: Option<&[Conflict]>,
 ) -> Result<String> {
     let bindings = config
         .bindings
@@ -190,7 +218,76 @@ fn list_json(
                 .collect(),
         },
         bindings,
+        conflicts,
     })?)
+}
+
+fn conflicts_table(conflicts: &[Conflict]) -> String {
+    if conflicts.is_empty() {
+        return "No shortcut conflicts found.\n".into();
+    }
+
+    let rows: Vec<_> = conflicts
+        .iter()
+        .map(|conflict| {
+            (
+                conflict.shortcut.as_str(),
+                conflict.kind,
+                conflict.action.as_str(),
+                format!("{} {}", source_label(&conflict.source), conflict.label),
+            )
+        })
+        .collect();
+    let shortcut_width = rows
+        .iter()
+        .map(|(shortcut, _, _, _)| shortcut.len())
+        .max()
+        .unwrap_or(0)
+        .max("SHORTCUT".len());
+    let kind_width = rows
+        .iter()
+        .map(|(_, kind, _, _)| kind.len())
+        .max()
+        .unwrap_or(0)
+        .max("TYPE".len());
+    let action_width = rows
+        .iter()
+        .map(|(_, _, action, _)| action.len())
+        .max()
+        .unwrap_or(0)
+        .max("ACTION".len());
+    let noun = if rows.len() == 1 {
+        "conflict"
+    } else {
+        "conflicts"
+    };
+
+    let mut output = format!(
+        "{} {noun}\n\n{:<shortcut_width$}  {:<kind_width$}  {:<action_width$}  CONFLICTS WITH\n",
+        rows.len(),
+        "SHORTCUT",
+        "TYPE",
+        "ACTION"
+    );
+    for (shortcut, kind, action, conflicts_with) in rows {
+        output.push_str(&format!(
+            "{shortcut:<shortcut_width$}  {kind:<kind_width$}  {action:<action_width$}  {conflicts_with}\n"
+        ));
+    }
+    output
+}
+
+fn source_label(source: &str) -> &str {
+    match source {
+        "macos" => "macOS",
+        "safari" => "Safari",
+        "chrome" => "Chrome",
+        "finder" => "Finder",
+        "terminal" => "Terminal/readline",
+        "ghostty" => "Ghostty",
+        "slack" => "Slack",
+        other => other,
+    }
 }
 
 fn shortcuts_table(bindings: &BTreeMap<String, Action>, color: bool) -> String {
