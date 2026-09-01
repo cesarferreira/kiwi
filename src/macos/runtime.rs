@@ -1,10 +1,12 @@
 use std::sync::mpsc::Receiver;
 
 use crate::{
-    config::CompiledConfig,
+    config::{Action, CompiledConfig},
     engine::{Decision, Engine, Input},
-    key::Chord,
+    key::{Chord, Key},
 };
+
+use super::feedback::ActionJob;
 
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum ReloadNotice {
@@ -15,7 +17,20 @@ pub(crate) enum ReloadNotice {
 pub(crate) struct HandledEvent {
     pub decision: Decision,
     pub chord: Option<Chord>,
+    pub action_job: Option<ActionJob>,
     pub notices: Vec<ReloadNotice>,
+}
+
+fn job_chord(action: &Action, triggering: Option<Chord>, pressed: Option<Key>) -> Option<Chord> {
+    if let Some(chord) = triggering {
+        return Some(chord);
+    }
+    // Hyper and dual-role taps resolve on key-up, so the physical key alone
+    // does not describe what the user asked for.
+    if let Action::SendKeys(emitted) = action {
+        return Some(emitted.clone());
+    }
+    pressed.map(|key| Chord::new(Vec::new(), key))
 }
 
 pub(crate) struct ReloadingEngine {
@@ -46,13 +61,29 @@ impl ReloadingEngine {
         self.drain_configs(&mut notices);
         self.apply_if_idle(&mut notices);
 
-        let chord = preview.then(|| self.engine.preview_chord(&input)).flatten();
+        let preview_chord = self.engine.preview_chord(&input);
+        let chord = preview.then(|| preview_chord.clone()).flatten();
+        let pressed_key = match &input {
+            Input::Key { key, .. } => Some(key.clone()),
+            Input::Modifier { .. } => None,
+        };
         let decision = self.engine.handle(input);
+        let action_job = match &decision {
+            Decision::Trigger(action) => {
+                job_chord(action, preview_chord, pressed_key).map(|chord| ActionJob {
+                    chord,
+                    action: action.clone(),
+                    feedback: self.engine.feedback_policy(),
+                })
+            }
+            _ => None,
+        };
 
         self.apply_if_idle(&mut notices);
         HandledEvent {
             decision,
             chord,
+            action_job,
             notices,
         }
     }
@@ -89,7 +120,7 @@ mod tests {
 
     use super::{ReloadNotice, ReloadingEngine};
     use crate::{
-        config::{Action, AppAction, AppBehavior, Config},
+        config::{Action, AppAction, AppBehavior, Config, FeedbackPolicy},
         engine::{Decision, EventKind, Input},
         key::Key,
     };
@@ -231,5 +262,75 @@ mod tests {
             runtime.handle(press("b")).decision,
             Decision::Trigger(launch("New"))
         );
+    }
+
+    #[test]
+    fn action_job_retains_normalized_chord_action_and_active_feedback_generation() {
+        let initial = config(
+            r#"
+            [ui]
+            feedback = "errors"
+
+            [bindings]
+            "Shift+Hyper+A" = { app = "Old" }
+            "#,
+        );
+        let replacement = config(
+            r#"
+            [ui]
+            feedback = "all"
+
+            [bindings]
+            "hyper+b" = { app = "New" }
+            "#,
+        );
+        let (sender, receiver) = mpsc::channel();
+        let mut runtime = ReloadingEngine::new(initial, receiver);
+
+        runtime.handle(press("caps_lock"));
+        runtime.handle(Input::Modifier {
+            modifier: "shift".parse().unwrap(),
+            kind: EventKind::Down,
+        });
+        sender.send(replacement).unwrap();
+        let old = runtime.handle(press("a")).action_job.unwrap();
+        assert_eq!(old.chord.to_string(), "hyper+shift+a");
+        assert_eq!(old.action, launch("Old"));
+        assert_eq!(old.feedback, FeedbackPolicy::Errors);
+
+        runtime.handle(release("a"));
+        runtime.handle(Input::Modifier {
+            modifier: "shift".parse().unwrap(),
+            kind: EventKind::Up,
+        });
+        runtime.handle(release("caps_lock"));
+
+        runtime.handle(press("caps_lock"));
+        let new = runtime.handle(press("b")).action_job.unwrap();
+        assert_eq!(new.chord.to_string(), "hyper+b");
+        assert_eq!(new.action, launch("New"));
+        assert_eq!(new.feedback, FeedbackPolicy::All);
+    }
+
+    #[test]
+    fn hyper_tap_job_reports_the_emitted_key_not_the_physical_hyper_key() {
+        let initial = config(
+            r#"
+            [ui]
+            feedback = "all"
+
+            [hyper]
+            key = "caps_lock"
+            tap = "escape"
+            "#,
+        );
+        let (_sender, receiver) = mpsc::channel();
+        let mut runtime = ReloadingEngine::new(initial, receiver);
+
+        runtime.handle(press("caps_lock"));
+        let tap = runtime.handle(release("caps_lock")).action_job.unwrap();
+
+        assert_eq!(tap.chord.to_string(), "escape");
+        assert_eq!(tap.action, Action::SendKeys("escape".parse().unwrap()));
     }
 }

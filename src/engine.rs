@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use crate::{
-    config::{Action, CompiledConfig},
+    config::{Action, CompiledConfig, FeedbackPolicy},
     key::{Chord, Key, Modifier},
 };
 
@@ -82,6 +82,10 @@ impl Engine {
 
     pub fn hyper_key(&self) -> &Key {
         &self.config.hyper.key
+    }
+
+    pub(crate) fn feedback_policy(&self) -> FeedbackPolicy {
+        self.config.ui.feedback
     }
 
     pub fn replace_config(&mut self, config: CompiledConfig) {

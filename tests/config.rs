@@ -1,4 +1,6 @@
-use kiwi_keymapper::config::{Action, AppAction, AppBehavior, Config};
+use kiwi_keymapper::config::{
+    Action, AppAction, AppBehavior, Config, FeedbackPolicy, FeedbackStyle,
+};
 
 const EXAMPLE: &str = r#"
 [hyper]
@@ -12,6 +14,80 @@ modifiers = ["command", "control", "option", "shift"]
 "hyper+a" = { keys = "control+a" }
 "left_option+h" = { keys = "left", enabled = false }
 "#;
+
+#[test]
+fn ui_feedback_defaults_to_errors_and_notification() {
+    let compiled = Config::from_toml("").unwrap().compile().unwrap();
+
+    assert_eq!(compiled.ui.feedback, FeedbackPolicy::Errors);
+    assert_eq!(compiled.ui.style, FeedbackStyle::Notification);
+}
+
+#[test]
+fn partial_and_empty_ui_tables_keep_field_defaults() {
+    for contents in [
+        "[ui]",
+        r#"[ui]
+feedback = "all""#,
+        r#"[ui]
+style = "notification""#,
+    ] {
+        let compiled = Config::from_toml(contents).unwrap().compile().unwrap();
+        let expected_feedback = if contents.contains("feedback") {
+            FeedbackPolicy::All
+        } else {
+            FeedbackPolicy::Errors
+        };
+
+        assert_eq!(compiled.ui.feedback, expected_feedback);
+        assert_eq!(compiled.ui.style, FeedbackStyle::Notification);
+    }
+}
+
+#[test]
+fn parses_every_supported_ui_feedback_policy() {
+    for (value, expected) in [
+        ("off", FeedbackPolicy::Off),
+        ("errors", FeedbackPolicy::Errors),
+        ("all", FeedbackPolicy::All),
+    ] {
+        let compiled = Config::from_toml(&format!(
+            r#"
+            [ui]
+            feedback = "{value}"
+            style = "notification"
+            "#
+        ))
+        .unwrap()
+        .compile()
+        .unwrap();
+
+        assert_eq!(compiled.ui.feedback, expected);
+        assert_eq!(compiled.ui.style, FeedbackStyle::Notification);
+    }
+}
+
+#[test]
+fn rejects_unknown_ui_feedback_and_style_values() {
+    for (contents, expected) in [
+        (
+            r#"[ui]
+feedback = "sometimes""#,
+            "unknown feedback",
+        ),
+        (
+            r#"[ui]
+style = "hud""#,
+            "unknown feedback style",
+        ),
+    ] {
+        let error = format!("{:#}", Config::from_toml(contents).unwrap_err());
+        assert!(
+            error.contains(expected),
+            "expected `{expected}` in `{error}`"
+        );
+    }
+}
 
 #[test]
 fn parses_portable_hyper_and_binding_actions() {

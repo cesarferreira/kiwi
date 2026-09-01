@@ -1,6 +1,9 @@
 pub mod app_controller;
 mod daemon;
 mod events;
+mod feedback;
+#[cfg(test)]
+mod feedback_tests;
 mod keycodes;
 mod launchd;
 mod listener;

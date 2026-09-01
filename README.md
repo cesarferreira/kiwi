@@ -103,6 +103,10 @@ key = "caps_lock"
 tap = "escape"
 modifiers = ["command", "control", "option", "shift"]
 
+[ui]
+feedback = "errors"
+style = "notification"
+
 [bindings]
 "hyper+t" = { app = "Ghostty" }
 "hyper+s" = { app = "Slack" }
@@ -119,6 +123,10 @@ This example demonstrates every action type and the main chord features:
 key = "caps_lock"
 tap = "escape"
 modifiers = ["command", "control", "option", "shift"]
+
+[ui]
+feedback = "errors"
+style = "notification"
 
 [bindings]
 # Launch or focus an application by name (the default behavior).
@@ -188,6 +196,33 @@ modifiers = ["command", "option"]
 When `caps_lock` is the Hyper key, `kiwi` owns a macOS `hidutil` mapping
 from Caps Lock to F18. F18 is therefore reserved and should not be configured
 as a separate shortcut.
+
+### `[ui]`
+
+The optional `[ui]` table controls macOS notifications after actions:
+
+```toml
+[ui]
+feedback = "errors"
+style = "notification"
+```
+
+| Field | Values | Default |
+|---|---|---|
+| `feedback` | `"off"`, `"errors"`, or `"all"` | `"errors"` |
+| `style` | `"notification"` | `"notification"` |
+
+`errors` reports failed app, URL, command, and key actions. `all` also reports
+successful actions, while `off` disables action feedback. Notifications show
+the triggering chord and action plus a concise failure detail. Full command
+stderr and errors remain in the Kiwi log.
+
+Kiwi uses macOS `display notification` through a static `osascript` program;
+notification text is passed as arguments and is not inserted into script
+source. Depending on the macOS version, notifications may be attributed to
+`osascript` or macOS rather than Kiwi and may need to be enabled in **System
+Settings → Notifications**. This is a system notification, not a custom HUD.
+Changes to `[ui]` reload at the same idle key boundary as bindings.
 
 ### `[bindings]`
 
@@ -513,6 +548,8 @@ Interactive output is colored by chord, match state, and action type. Piped
 output is plain text. Repeats, releases, modifier-only events, Kiwi-generated
 synthetic keys, and a Hyper tap by itself are omitted. The listener uses the
 same automatic reload behavior as the daemon.
+It never posts action feedback notifications, even when `[ui].feedback` is
+`"all"`.
 
 For compact newline-delimited JSON, run `kiwi --format json listen`. Each
 observation is one object on stdout:
@@ -615,7 +652,8 @@ with a stable signature and refreshes the LaunchAgent.
 3. Pressing the Hyper key holds the configured virtual modifiers. Releasing it
    without another key emits the configured tap key.
 4. Matching chords dispatch their action on a worker thread so slow commands do
-   not block keyboard input.
+   not block keyboard input. Notifications use a separate worker so notification
+   delivery cannot delay later actions or their failure logs.
 5. An event-driven watcher compiles config edits off the keyboard callback and
    swaps in only valid, compatible changes at an idle key boundary.
 6. A per-user LaunchAgent starts the daemon at login and restarts it if needed.

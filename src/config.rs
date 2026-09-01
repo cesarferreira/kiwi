@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer, de};
 
 use crate::key::{Chord, Key, Modifier};
 
@@ -32,6 +32,38 @@ pub enum AppBehavior {
     Hide,
     Cycle,
     NewWindow,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum FeedbackPolicy {
+    Off,
+    #[default]
+    Errors,
+    All,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum FeedbackStyle {
+    #[default]
+    Notification,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct UiConfig {
+    #[serde(deserialize_with = "deserialize_feedback_policy")]
+    pub feedback: FeedbackPolicy,
+    #[serde(deserialize_with = "deserialize_feedback_style")]
+    pub style: FeedbackStyle,
+}
+
+impl Default for UiConfig {
+    fn default() -> Self {
+        Self {
+            feedback: FeedbackPolicy::Errors,
+            style: FeedbackStyle::Notification,
+        }
+    }
 }
 
 impl FromStr for AppBehavior {
@@ -81,6 +113,8 @@ pub struct Config {
     pub hyper: HyperSpec,
     #[serde(default)]
     pub bindings: BTreeMap<String, BindingSpec>,
+    #[serde(default)]
+    pub ui: UiConfig,
 }
 
 impl Config {
@@ -122,6 +156,7 @@ impl Config {
         Ok(CompiledConfig {
             hyper,
             bindings,
+            ui: self.ui,
             compiled_bindings,
         })
     }
@@ -131,6 +166,7 @@ impl Config {
 pub struct CompiledConfig {
     pub hyper: Hyper,
     pub bindings: BTreeMap<String, Action>,
+    pub ui: UiConfig,
     compiled_bindings: HashMap<Key, Vec<(Chord, Action)>>,
 }
 
@@ -271,6 +307,32 @@ fn require_nonempty(field: &str, value: &str) -> Result<()> {
         bail!("`{field}` cannot be empty");
     }
     Ok(())
+}
+
+fn deserialize_feedback_policy<'de, D>(deserializer: D) -> Result<FeedbackPolicy, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    match String::deserialize(deserializer)?.as_str() {
+        "off" => Ok(FeedbackPolicy::Off),
+        "errors" => Ok(FeedbackPolicy::Errors),
+        "all" => Ok(FeedbackPolicy::All),
+        other => Err(de::Error::custom(format!(
+            "unknown feedback `{other}`; expected `off`, `errors`, or `all`"
+        ))),
+    }
+}
+
+fn deserialize_feedback_style<'de, D>(deserializer: D) -> Result<FeedbackStyle, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    match String::deserialize(deserializer)?.as_str() {
+        "notification" => Ok(FeedbackStyle::Notification),
+        other => Err(de::Error::custom(format!(
+            "unknown feedback style `{other}`; expected `notification`"
+        ))),
+    }
 }
 
 pub(crate) fn chord_matches(binding: &Chord, actual: &Chord) -> bool {

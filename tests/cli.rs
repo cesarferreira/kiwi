@@ -131,6 +131,10 @@ key = "f19"
 tap = "escape"
 modifiers = ["command", "option"]
 
+[ui]
+feedback = "all"
+style = "notification"
+
 [bindings]
 "hyper+u" = { url = "https://example.com" }
 "hyper+p" = { command = "echo hi" }

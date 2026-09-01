@@ -11,6 +11,10 @@ key = "caps_lock"
 tap = "escape"
 modifiers = ["command", "control", "option", "shift"]
 
+[ui]
+feedback = "errors"
+style = "notification"
+
 [bindings]
 "hyper+t" = { app = "Ghostty" }
 "hyper+s" = { app = "Slack" }
