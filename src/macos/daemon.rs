@@ -335,7 +335,7 @@ fn flags_for(modifiers: &[Modifier]) -> CGEventFlags {
                     flags.insert(CGEventFlags::CGEventFlagShift);
                 }
                 Modifier::Function => flags.insert(CGEventFlags::CGEventFlagSecondaryFn),
-                Modifier::Hyper => {}
+                Modifier::Hyper | Modifier::Named(_) => {}
             }
             flags
         })

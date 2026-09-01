@@ -30,6 +30,7 @@ keyboard shortcuts.
 - One declarative TOML configuration
 - Global shortcuts available in every application
 - Caps Lock → Hyper/Escape dual-role key
+- Additional hold-layer/tap dual-role keys
 - App, URL, command, and key-sequence actions
 - Generic and side-specific modifiers
 - Automatic config reloads, including symlinked dotfiles
@@ -103,11 +104,17 @@ key = "caps_lock"
 tap = "escape"
 modifiers = ["command", "control", "option", "shift"]
 
+[[dual_role]]
+key = "space"
+tap = "space"
+hold_modifier = "leader"
+
 [bindings]
 "hyper+t" = { app = "Ghostty" }
 "hyper+s" = { app = "Slack" }
 "hyper+b" = { url = "https://github.com" }
 "hyper+a" = { keys = "control+a" }
+"leader+f" = { app = "Finder" }
 ```
 
 ## Complete configuration example
@@ -182,6 +189,52 @@ modifiers = ["command", "option"]
 When `caps_lock` is the Hyper key, `kiwi` owns a macOS `hidutil` mapping
 from Caps Lock to F18. F18 is therefore reserved and should not be configured
 as a separate shortcut.
+
+### `[[dual_role]]`
+
+Each optional `[[dual_role]]` table defines an additional hold-layer/tap key:
+
+| Field | Meaning |
+|---|---|
+| `key` | Physical key to suppress while it is held |
+| `tap` | Key or physical chord emitted when `key` is released unused |
+| `hold_modifier` | Virtual modifier name exposed to bindings while held |
+
+For example, Space can act as a `leader` layer while preserving an ordinary
+Space tap:
+
+```toml
+[[dual_role]]
+key = "space"
+tap = "space"
+hold_modifier = "leader"
+
+[bindings]
+"leader+f" = { app = "Finder" }
+```
+
+This is a hold modifier, not a sequential leader: keep Space held while
+pressing F. If the held layer has no matching binding, Kiwi suppresses the
+layer key, passes the secondary key through unchanged, and does not emit the
+tap action. Repeats and releases of matched chords remain suppressed.
+
+Physical modifiers already held when a dual-role key goes down are included in
+its tap action, so Command+Space taps as Command+Space and Shift+Space taps as
+Shift+Space. A physical modifier pressed after the dual-role key instead counts
+as using its hold layer, so the tap action is suppressed.
+
+Hold modifier names are normalized like built-in modifiers and may be combined,
+including nested chords such as `hyper+leader+t`. Names must be unique and
+cannot collide with `hyper`, a built-in modifier, or a supported physical key.
+Dual-role physical keys must also be unique and cannot duplicate `[hyper].key`.
+Additional dual-role keys reload live and do not create HID mappings.
+
+When dual-role keys are nested, pressing the inner key marks the outer key as
+used. The inner key may still tap if it is otherwise unused; that tap includes
+physical modifiers held before the inner key went down, but does not attempt to
+emit an outer virtual layer. Releasing the outer key first leaves the inner
+layer active. Hyper follows the same ordering rule when nested with an
+additional dual-role key.
 
 ### `[bindings]`
 
@@ -269,6 +322,8 @@ A chord consists of zero or more modifiers followed by one key, separated by
 
 ```text
 hyper+t
+leader+f
+hyper+leader+t
 command+shift+p
 left_option+h
 f12
@@ -301,6 +356,9 @@ side-specific binding such as `left_option+h` takes precedence over a generic
 | `right_option` | `right_alt` |
 | `left_shift` | — |
 | `right_shift` | — |
+
+Configured `[[dual_role]].hold_modifier` names are also accepted as virtual
+modifiers in binding chords.
 
 ### Supported keys
 
@@ -351,6 +409,24 @@ physical ANSI key position when a different macOS input layout is active.
 "hyper+f" = { app = "Firefox" }
 "hyper+e" = { app = "Finder" }
 ```
+
+### Space as a hold leader
+
+```toml
+[[dual_role]]
+key = "space"
+tap = "space"
+hold_modifier = "leader"
+
+[bindings]
+"leader+f" = { app = "Finder" }
+"leader+t" = { app = "Ghostty" }
+"hyper+leader+n" = { command = "/Users/me/.local/bin/new-note" }
+```
+
+Keep Space held while pressing the second key. Releasing Space before pressing
+another key emits one normal Space; this does not implement a sequential
+Space-then-key leader.
 
 ### Websites and deep links
 
@@ -412,7 +488,7 @@ edit cannot split a held chord across two configurations.
 If an edit is invalid, Kiwi reports the error in its log and keeps the last
 valid configuration active. Fixing the file triggers another reload; no
 restart is needed. Changes to bindings, the Hyper tap action, and its emitted
-modifiers all reload live.
+modifiers, and additional `[[dual_role]]` entries all reload live.
 
 Changing `[hyper].key` still requires `kiwi restart` because the physical HID
 mapping is established when the process starts. Kiwi rejects that part of a
@@ -539,8 +615,8 @@ with a stable signature and refreshes the LaunchAgent.
 1. For the default Caps Lock setup, `kiwi` applies a narrowly scoped
    `hidutil` mapping from Caps Lock to F18.
 2. A macOS event tap observes keyboard events globally.
-3. Pressing the Hyper key holds the configured virtual modifiers. Releasing it
-   without another key emits the configured tap key.
+3. Pressing Hyper or an additional dual-role key activates its hold modifiers.
+   Releasing it without using another key emits its configured tap key.
 4. Matching chords dispatch their action on a worker thread so slow commands do
    not block keyboard input.
 5. An event-driven watcher compiles config edits off the keyboard callback and

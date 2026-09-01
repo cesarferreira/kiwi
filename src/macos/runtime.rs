@@ -201,4 +201,80 @@ mod tests {
         runtime.handle(press("caps_lock"));
         assert!(runtime.handle(press("a")).chord.is_none());
     }
+
+    #[test]
+    fn dual_role_reload_waits_for_idle_and_updates_listener_preview() {
+        let initial = config(
+            r#"
+            [[dual_role]]
+            key = "space"
+            tap = "space"
+            hold_modifier = "leader"
+
+            [bindings]
+            "leader+a" = { app = "Old" }
+            "#,
+        );
+        let replacement = config(
+            r#"
+            [[dual_role]]
+            key = "tab"
+            tap = "tab"
+            hold_modifier = "nav"
+
+            [bindings]
+            "nav+b" = { app = "New" }
+            "#,
+        );
+        let (sender, receiver) = mpsc::channel();
+        let mut runtime = ReloadingEngine::new(initial, receiver);
+
+        runtime.observe(press("space"));
+        sender.send(replacement).unwrap();
+        let old = runtime.observe(press("a"));
+        assert_eq!(old.chord.unwrap().to_string(), "leader+a");
+        assert_eq!(
+            old.decision,
+            Decision::Trigger(Action::LaunchApp("Old".into()))
+        );
+        assert!(old.notices.is_empty());
+        runtime.observe(release("a"));
+        let boundary = runtime.observe(release("space"));
+        assert_eq!(boundary.notices, vec![ReloadNotice::Applied(1)]);
+
+        runtime.observe(press("tab"));
+        let new = runtime.observe(press("b"));
+        assert_eq!(new.chord.unwrap().to_string(), "nav+b");
+        assert_eq!(
+            new.decision,
+            Decision::Trigger(Action::LaunchApp("New".into()))
+        );
+    }
+
+    #[test]
+    fn lost_passthrough_key_up_does_not_block_reload() {
+        let initial = config(
+            r#"
+            [bindings]
+            "hyper+a" = { app = "Old" }
+            "#,
+        );
+        let replacement = config(
+            r#"
+            [bindings]
+            "hyper+b" = { app = "New" }
+            "#,
+        );
+        let (sender, receiver) = mpsc::channel();
+        let mut runtime = ReloadingEngine::new(initial, receiver);
+
+        assert_eq!(runtime.handle(press("q")).decision, Decision::Pass);
+        sender.send(replacement).unwrap();
+        let boundary = runtime.handle(press("caps_lock"));
+        assert_eq!(boundary.notices, vec![ReloadNotice::Applied(1)]);
+        assert_eq!(
+            runtime.handle(press("b")).decision,
+            Decision::Trigger(Action::LaunchApp("New".into()))
+        );
+    }
 }
