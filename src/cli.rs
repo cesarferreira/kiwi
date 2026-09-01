@@ -7,7 +7,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use kiwi_keymapper::{
     DEFAULT_CONFIG,
     config::{Action, Config},
@@ -16,6 +16,14 @@ use kiwi_keymapper::{
         run_event_tap,
     },
 };
+use serde::Serialize;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
+enum Format {
+    #[default]
+    Text,
+    Json,
+}
 
 #[derive(Parser, Debug)]
 #[command(name = "kiwi", version, about = "Run portable macOS key mappings")]
@@ -23,6 +31,10 @@ struct Cli {
     /// Use a config file other than ~/.config/kiwi/config.toml
     #[arg(long, global = true, value_name = "PATH")]
     config: Option<PathBuf>,
+
+    /// Select text or JSON output
+    #[arg(long, global = true, value_enum, default_value_t)]
+    format: Format,
 
     #[command(subcommand)]
     command: Command,
@@ -75,19 +87,20 @@ pub fn run() -> Result<()> {
             println!("config is valid: {}", config_path.display());
             Ok(())
         }
-        Command::List => list_shortcuts(&config_path),
+        Command::List => list_shortcuts(&config_path, cli.format),
         Command::Run => run_event_tap(&config_path, load_config(&config_path)?),
         Command::Listen => listen_event_tap(
             &config_path,
             load_config(&config_path)?,
             io::stdout().is_terminal(),
+            cli.format == Format::Json,
         ),
         Command::Install => install(&config_path),
         Command::Start => start(),
         Command::Stop => stop(),
         Command::Uninstall => uninstall(),
         Command::Restart => launchctl(&["kickstart", "-k", &service_target()]),
-        Command::Status => status(),
+        Command::Status => status(cli.format),
         Command::Doctor => doctor(&config_path),
         Command::Permissions => {
             let status = ProcessCommand::new("/usr/bin/open")
@@ -112,25 +125,79 @@ fn load_config(path: &Path) -> Result<kiwi_keymapper::config::CompiledConfig> {
     Config::from_path(path)?.compile()
 }
 
-fn list_shortcuts(config_path: &Path) -> Result<()> {
+fn list_shortcuts(config_path: &Path, format: Format) -> Result<()> {
     let config = load_config(config_path)?;
-    print!(
-        "{}",
-        shortcuts_table(&config.bindings, io::stdout().is_terminal())
-    );
+    match format {
+        Format::Text => print!(
+            "{}",
+            shortcuts_table(&config.bindings, io::stdout().is_terminal())
+        ),
+        Format::Json => println!("{}", list_json(config_path, &config)?),
+    }
     Ok(())
+}
+
+#[derive(Serialize)]
+struct ListOutput<'a> {
+    schema_version: u8,
+    config_path: &'a Path,
+    hyper: HyperOutput,
+    bindings: Vec<BindingOutput<'a>>,
+}
+
+#[derive(Serialize)]
+struct HyperOutput {
+    key: String,
+    tap: String,
+    modifiers: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct BindingOutput<'a> {
+    shortcut: &'a str,
+    #[serde(rename = "type")]
+    kind: &'static str,
+    action: String,
+}
+
+fn list_json(
+    config_path: &Path,
+    config: &kiwi_keymapper::config::CompiledConfig,
+) -> Result<String> {
+    let bindings = config
+        .bindings
+        .iter()
+        .map(|(shortcut, action)| {
+            let (kind, action) = action.type_and_value();
+            BindingOutput {
+                shortcut,
+                kind,
+                action,
+            }
+        })
+        .collect();
+    Ok(serde_json::to_string(&ListOutput {
+        schema_version: 1,
+        config_path,
+        hyper: HyperOutput {
+            key: config.hyper.key.to_string(),
+            tap: config.hyper.tap.to_string(),
+            modifiers: config
+                .hyper
+                .modifiers
+                .iter()
+                .map(|modifier| modifier.as_str().to_owned())
+                .collect(),
+        },
+        bindings,
+    })?)
 }
 
 fn shortcuts_table(bindings: &BTreeMap<String, Action>, color: bool) -> String {
     let rows: Vec<_> = bindings
         .iter()
         .map(|(shortcut, action)| {
-            let (kind, value) = match action {
-                Action::LaunchApp(value) => ("app", value.clone()),
-                Action::OpenUrl(value) => ("url", value.clone()),
-                Action::RunCommand(value) => ("command", value.clone()),
-                Action::SendKeys(value) => ("keys", value.to_string()),
-            };
+            let (kind, value) = action.type_and_value();
             (shortcut.as_str(), kind, value)
         })
         .collect();
@@ -325,16 +392,32 @@ enum LaunchAgentState {
     NotRunning,
 }
 
-fn status() -> Result<()> {
+fn status(format: Format) -> Result<()> {
     let state = query_launch_agent_state()?;
-    let elapsed = match state {
-        LaunchAgentState::Running { pid: Some(pid) } => process_elapsed_time(pid),
+    let elapsed_raw = match state {
+        LaunchAgentState::Running { pid: Some(pid) } => process_elapsed_raw(pid),
         _ => None,
     };
-    println!(
-        "{}",
-        status_line(state, elapsed.as_deref(), io::stdout().is_terminal())
-    );
+    match format {
+        Format::Text => println!(
+            "{}",
+            status_line(
+                state,
+                elapsed_raw
+                    .as_deref()
+                    .and_then(format_elapsed_time)
+                    .as_deref(),
+                io::stdout().is_terminal()
+            )
+        ),
+        Format::Json => println!(
+            "{}",
+            status_json(
+                state,
+                elapsed_raw.as_deref().and_then(parse_elapsed_seconds)
+            )?
+        ),
+    }
     Ok(())
 }
 
@@ -374,7 +457,7 @@ fn unloaded_launch_agent_state(plist_exists: bool) -> LaunchAgentState {
     }
 }
 
-fn process_elapsed_time(pid: u32) -> Option<String> {
+fn process_elapsed_raw(pid: u32) -> Option<String> {
     let output = ProcessCommand::new("/bin/ps")
         .args(["-p", &pid.to_string(), "-o", "etime="])
         .output()
@@ -382,11 +465,10 @@ fn process_elapsed_time(pid: u32) -> Option<String> {
     output
         .status
         .success()
-        .then(|| format_elapsed_time(&String::from_utf8_lossy(&output.stdout)))
-        .flatten()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
-fn format_elapsed_time(elapsed: &str) -> Option<String> {
+fn parse_elapsed_parts(elapsed: &str) -> Option<(u64, u64, u64, u64)> {
     let elapsed = elapsed.trim();
     let (days, clock) = match elapsed.split_once('-') {
         Some((days, clock)) => (days.parse::<u64>().ok()?, clock),
@@ -396,11 +478,20 @@ fn format_elapsed_time(elapsed: &str) -> Option<String> {
         .split(':')
         .map(|part| part.parse::<u64>().ok())
         .collect::<Option<Vec<_>>>()?;
-    let (hours, minutes, seconds) = match parts.as_slice() {
-        [minutes, seconds] => (0, *minutes, *seconds),
-        [hours, minutes, seconds] => (*hours, *minutes, *seconds),
-        _ => return None,
-    };
+    match parts.as_slice() {
+        [minutes, seconds] => Some((days, 0, *minutes, *seconds)),
+        [hours, minutes, seconds] => Some((days, *hours, *minutes, *seconds)),
+        _ => None,
+    }
+}
+
+fn parse_elapsed_seconds(elapsed: &str) -> Option<u64> {
+    let (days, hours, minutes, seconds) = parse_elapsed_parts(elapsed)?;
+    Some(days * 86_400 + hours * 3_600 + minutes * 60 + seconds)
+}
+
+fn format_elapsed_time(elapsed: &str) -> Option<String> {
+    let (days, hours, minutes, seconds) = parse_elapsed_parts(elapsed)?;
     Some(if days > 0 {
         if hours > 0 {
             format!("{days}d {hours}h")
@@ -418,6 +509,30 @@ fn format_elapsed_time(elapsed: &str) -> Option<String> {
     } else {
         format!("{seconds}s")
     })
+}
+
+#[derive(Serialize)]
+struct StatusOutput {
+    schema_version: u8,
+    state: &'static str,
+    pid: Option<u32>,
+    uptime_seconds: Option<u64>,
+    label: &'static str,
+}
+
+fn status_json(state: LaunchAgentState, uptime_seconds: Option<u64>) -> Result<String> {
+    let (state_name, pid, uptime_seconds) = match state {
+        LaunchAgentState::Running { pid } => ("running", pid, uptime_seconds),
+        LaunchAgentState::NotRunning => ("stopped", None, None),
+        LaunchAgentState::Missing => ("missing", None, None),
+    };
+    Ok(serde_json::to_string(&StatusOutput {
+        schema_version: 1,
+        state: state_name,
+        pid,
+        uptime_seconds,
+        label: LABEL,
+    })?)
 }
 
 fn status_line(state: LaunchAgentState, elapsed: Option<&str>, color: bool) -> String {
@@ -830,6 +945,35 @@ mod tests {
     }
 
     #[test]
+    fn formats_stable_json_for_every_daemon_state() {
+        assert_eq!(
+            super::status_json(
+                super::LaunchAgentState::Running { pid: Some(85265) },
+                Some(357)
+            )
+            .unwrap(),
+            concat!(
+                "{\"schema_version\":1,\"state\":\"running\",\"pid\":85265,",
+                "\"uptime_seconds\":357,\"label\":\"io.github.cesarferreira.kiwi\"}"
+            )
+        );
+        assert_eq!(
+            super::status_json(super::LaunchAgentState::NotRunning, None).unwrap(),
+            concat!(
+                "{\"schema_version\":1,\"state\":\"stopped\",\"pid\":null,",
+                "\"uptime_seconds\":null,\"label\":\"io.github.cesarferreira.kiwi\"}"
+            )
+        );
+        assert_eq!(
+            super::status_json(super::LaunchAgentState::Missing, None).unwrap(),
+            concat!(
+                "{\"schema_version\":1,\"state\":\"missing\",\"pid\":null,",
+                "\"uptime_seconds\":null,\"label\":\"io.github.cesarferreira.kiwi\"}"
+            )
+        );
+    }
+
+    #[test]
     fn formats_process_elapsed_time_compactly() {
         assert_eq!(
             super::format_elapsed_time("05:57").as_deref(),
@@ -843,6 +987,14 @@ mod tests {
             super::format_elapsed_time("3-06:02:01").as_deref(),
             Some("3d 6h")
         );
+    }
+
+    #[test]
+    fn parses_process_elapsed_time_as_seconds() {
+        assert_eq!(super::parse_elapsed_seconds("05:57"), Some(357));
+        assert_eq!(super::parse_elapsed_seconds("02:05:07"), Some(7_507));
+        assert_eq!(super::parse_elapsed_seconds("3-06:02:01"), Some(280_921));
+        assert_eq!(super::parse_elapsed_seconds("invalid"), None);
     }
 
     #[test]

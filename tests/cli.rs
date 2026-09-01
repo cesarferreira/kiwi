@@ -100,8 +100,9 @@ fn list_prints_enabled_shortcuts_as_an_aligned_table() {
     fs::remove_file(path).unwrap();
 
     assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
     assert_eq!(
-        String::from_utf8(output.stdout).unwrap(),
+        stdout,
         concat!(
             "4 shortcuts\n",
             "\n",
@@ -112,6 +113,66 @@ fn list_prints_enabled_shortcuts_as_an_aligned_table() {
             "hyper+u   url      https://example.com\n",
         )
     );
+}
+
+#[test]
+fn list_json_prints_stable_config_and_enabled_bindings() {
+    let path =
+        std::env::temp_dir().join(format!("kiwi-list-json-test-{}.toml", std::process::id()));
+    fs::write(
+        &path,
+        r#"
+[hyper]
+key = "f19"
+tap = "escape"
+modifiers = ["command", "option"]
+
+[bindings]
+"hyper+u" = { url = "https://example.com" }
+"hyper+p" = { command = "echo hi" }
+"hyper+t" = { keys = "control+a" }
+"hyper+a" = { app = "Arc" }
+"hyper+x" = { app = "Disabled", enabled = false }
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_kiwi"))
+        .args([
+            "--format",
+            "json",
+            "--config",
+            path.to_str().unwrap(),
+            "list",
+        ])
+        .output()
+        .unwrap();
+    fs::remove_file(&path).unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(
+        stdout,
+        format!(
+            concat!(
+                "{{\"schema_version\":1,\"config_path\":\"{}\",",
+                "\"hyper\":{{\"key\":\"f19\",\"tap\":\"escape\",",
+                "\"modifiers\":[\"command\",\"option\"]}},",
+                "\"bindings\":[",
+                "{{\"shortcut\":\"hyper+a\",\"type\":\"app\",\"action\":\"Arc\"}},",
+                "{{\"shortcut\":\"hyper+p\",\"type\":\"command\",\"action\":\"echo hi\"}},",
+                "{{\"shortcut\":\"hyper+t\",\"type\":\"keys\",\"action\":\"control+a\"}},",
+                "{{\"shortcut\":\"hyper+u\",\"type\":\"url\",\"action\":\"https://example.com\"}}",
+                "]}}\n"
+            ),
+            path.display()
+        )
+    );
+    assert!(!stdout.contains("\u{1b}["));
 }
 
 #[test]
