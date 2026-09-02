@@ -106,8 +106,8 @@ modifiers = ["command", "control", "option", "shift"]
 [ui]
 feedback = "errors"
 style = "notification"
-cheatsheet = false
-cheatsheet_delay_ms = 300
+cheatsheet = true
+cheatsheet_delay_ms = 1000
 
 [bindings]
 "hyper+t" = { app = "Ghostty" }
@@ -129,8 +129,8 @@ modifiers = ["command", "control", "option", "shift"]
 [ui]
 feedback = "errors"
 style = "notification"
-cheatsheet = false
-cheatsheet_delay_ms = 300
+cheatsheet = true
+cheatsheet_delay_ms = 1000
 
 [bindings]
 # Launch or focus an application by name (the default behavior).
@@ -210,16 +210,16 @@ cheatsheet overlay:
 [ui]
 feedback = "errors"
 style = "notification"
-cheatsheet = false
-cheatsheet_delay_ms = 300
+cheatsheet = true
+cheatsheet_delay_ms = 1000
 ```
 
 | Field | Values | Default |
 |---|---|---|
 | `feedback` | `"off"`, `"errors"`, or `"all"` | `"errors"` |
 | `style` | `"notification"` | `"notification"` |
-| `cheatsheet` | `true` or `false` | `false` |
-| `cheatsheet_delay_ms` | `0` through `5000` | `300` |
+| `cheatsheet` | `true` or `false` | `true` |
+| `cheatsheet_delay_ms` | `0` through `5000` | `1000` |
 
 With `cheatsheet = true`, `kiwi validate` rejects more than 64 enabled Hyper
 bindings so the overlay can show every one. Each displayed key, type, and

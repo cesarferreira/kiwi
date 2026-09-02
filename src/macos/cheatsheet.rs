@@ -103,7 +103,7 @@ fn show_native_overlay(model: &CheatsheetModel) -> Result<()> {
     let height = desired_height.min((visible.size.height - 40.0).max(180.0));
     let origin = NSPoint::new(
         visible.origin.x + (visible.size.width - width) / 2.0,
-        visible.origin.y + visible.size.height - height - 32.0,
+        visible.origin.y + (visible.size.height - height) / 2.0,
     );
 
     let app = NSApplication::sharedApplication(mtm);

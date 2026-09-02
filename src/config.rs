@@ -76,8 +76,8 @@ impl Default for UiConfig {
         Self {
             feedback: FeedbackPolicy::Errors,
             style: FeedbackStyle::Notification,
-            cheatsheet: false,
-            cheatsheet_delay_ms: 300,
+            cheatsheet: true,
+            cheatsheet_delay_ms: 1000,
         }
     }
 }

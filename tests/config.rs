@@ -21,8 +21,8 @@ fn ui_feedback_defaults_to_errors_and_notification() {
 
     assert_eq!(compiled.ui.feedback, FeedbackPolicy::Errors);
     assert_eq!(compiled.ui.style, FeedbackStyle::Notification);
-    assert!(!compiled.ui.cheatsheet);
-    assert_eq!(compiled.ui.cheatsheet_delay_ms, 300);
+    assert!(compiled.ui.cheatsheet);
+    assert_eq!(compiled.ui.cheatsheet_delay_ms, 1000);
 }
 
 #[test]
@@ -93,7 +93,7 @@ fn cheatsheet_rejects_more_than_64_enabled_hyper_bindings_but_allows_them_when_d
     let many = many_hyper_bindings(65);
     assert!(many.lines().filter(|line| line.contains("hyper+")).count() > 64);
 
-    let allowed = Config::from_toml(&format!("[bindings]\n{many}"))
+    let allowed = Config::from_toml(&format!("[ui]\ncheatsheet = false\n[bindings]\n{many}"))
         .unwrap()
         .compile()
         .unwrap();
