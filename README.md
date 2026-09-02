@@ -11,6 +11,10 @@
   </p>
 
   <p>
+    <img alt="kiwi configuration example" src="screenshot.png" width="800">
+  </p>
+
+  <p>
     <a href="#install">Install</a>
     &nbsp;·&nbsp;
     <a href="#quickstart">Quickstart</a>
