@@ -103,6 +103,12 @@ key = "caps_lock"
 tap = "escape"
 modifiers = ["command", "control", "option", "shift"]
 
+[ui]
+feedback = "errors"
+style = "notification"
+cheatsheet = true
+cheatsheet_delay_ms = 1000
+
 [bindings]
 "hyper+t" = { app = "Ghostty" }
 "hyper+s" = { app = "Slack" }
@@ -120,9 +126,21 @@ key = "caps_lock"
 tap = "escape"
 modifiers = ["command", "control", "option", "shift"]
 
+[ui]
+feedback = "errors"
+style = "notification"
+cheatsheet = true
+cheatsheet_delay_ms = 1000
+
 [bindings]
-# Launch an application by name.
+# Launch or focus an application by name (the default behavior).
 "hyper+t" = { app = "Ghostty" }
+
+# Toggle, hide, cycle windows, or request a new window.
+"hyper+return" = { app = "Ghostty", behavior = "toggle" }
+"hyper+h" = { app = "Ghostty", behavior = "hide" }
+"hyper+grave" = { app = "Ghostty", behavior = "cycle" }
+"hyper+n" = { app = "Safari", behavior = "new_window" }
 
 # Open a web URL or an application deep link.
 "hyper+b" = { url = "https://github.com" }
@@ -183,6 +201,57 @@ When `caps_lock` is the Hyper key, `kiwi` owns a macOS `hidutil` mapping
 from Caps Lock to F18. F18 is therefore reserved and should not be configured
 as a separate shortcut.
 
+### `[ui]`
+
+The optional `[ui]` table controls action notifications and the Hyper
+cheatsheet overlay:
+
+```toml
+[ui]
+feedback = "errors"
+style = "notification"
+cheatsheet = true
+cheatsheet_delay_ms = 1000
+```
+
+| Field | Values | Default |
+|---|---|---|
+| `feedback` | `"off"`, `"errors"`, or `"all"` | `"errors"` |
+| `style` | `"notification"` | `"notification"` |
+| `cheatsheet` | `true` or `false` | `true` |
+| `cheatsheet_delay_ms` | `0` through `5000` | `1000` |
+
+With `cheatsheet = true`, `kiwi validate` rejects more than 64 enabled Hyper
+bindings so the overlay can show every one. Each displayed key, type, and
+action is truncated to 160 characters. Maps larger than 64 Hyper bindings
+remain valid when the cheatsheet is off.
+
+`errors` reports failed app, URL, command, and key actions. `all` also reports
+successful actions, while `off` disables action feedback. Notifications show
+the triggering chord and action plus a concise failure detail. Full command
+stderr and errors remain in the Kiwi log.
+
+Kiwi uses macOS `display notification` through a static `osascript` program;
+notification text is passed as arguments and is not inserted into script
+source. Depending on the macOS version, notifications may be attributed to
+`osascript` or macOS rather than Kiwi and may need to be enabled in **System
+Settings → Notifications**. This is a system notification, not a custom HUD.
+The cheatsheet is separate: when enabled, holding Hyper past the configured
+delay opens a native, high-contrast panel listing every enabled Hyper binding's
+key, type, and action (all of them, up to the 64-binding limit). Hyper+Shift
+and other residual modifiers are shown with the key. The panel is non-activating
+and ignores mouse events, so it neither
+takes keyboard focus nor intercepts clicks. It is placed near the top center of
+the primary, menu-bar macOS screen and disappears immediately when Hyper is
+released. As a stuck-key safeguard, it also closes after 30 seconds and will
+not reopen until Hyper is released and pressed again.
+
+Version 1 opens the cheatsheet only for the `[hyper]` key. Ordinary physical
+modifiers and additional `[[dual_role]]` keys do not open it, and non-Hyper
+bindings are omitted. A quick chord or release before `cheatsheet_delay_ms`
+cancels the pending panel to avoid flashing. Changes to `[ui]` and bindings
+reload at the same idle key boundary and appear on the next Hyper hold.
+
 ### `[bindings]`
 
 Each entry maps a chord to an inline table. A binding must define exactly one
@@ -191,14 +260,64 @@ of `app`, `url`, `command`, or `keys`. `enabled` is optional and defaults to
 
 #### `app`
 
-Launches or focuses an application using macOS `open -a`:
+An app binding accepts an optional `behavior`. Omitting it is backward
+compatible and defaults to `launch`:
 
 ```toml
 [bindings]
 "hyper+t" = { app = "Ghostty" }
-"hyper+s" = { app = "Slack" }
-"hyper+f" = { app = "/Applications/Firefox.app" }
+"hyper+return" = { app = "Ghostty", behavior = "toggle" }
+"hyper+h" = { app = "Slack", behavior = "hide" }
+"hyper+grave" = { app = "/Applications/Ghostty.app", behavior = "cycle" }
+"hyper+n" = { app = "Safari", behavior = "new_window" }
+"hyper+g" = { app = "com.mitchellh.ghostty" }
 ```
+
+| Behavior | Meaning |
+|---|---|
+| `launch` | Launch or focus the app with macOS `open` (default) |
+| `toggle` | Launch the app when it is not running, activate it when backgrounded, or hide it without quitting when frontmost |
+| `hide` | Hide a running app without quitting it; reports an action error when it is not running |
+| `cycle` | Select the next accessibility window of the configured running app, raise it, then activate that app |
+| `new_window` | Ask macOS for a new app instance/window |
+
+`behavior` is valid only alongside `app`. App names, absolute `.app` paths, and
+reverse-DNS bundle identifiers such as `com.apple.Safari` are supported. Names
+and paths use `open -a` (or `open -na` for `new_window`); bundle identifiers use
+`open -b` (or `open -n -b`). Toggle, hide, and cycle resolve only an
+already-running System Events process and never launch the target while
+resolving it. Toggle inspects every process matching the configured target in
+one atomic operation: if any of them is frontmost it hides that process,
+otherwise it activates a matching one. Only when no process matches does Kiwi
+launch the target with `open`. Hiding does not quit the app.
+
+Window cycling uses the target process's accessibility window list and
+`AXMain`, `AXFocused`, and `AXRaise`; it never sends a global Command+grave.
+This depends on Accessibility permission and on the app exposing usable
+accessibility windows. `new_window` is app-dependent: single-window utilities
+and apps that restore one shared window may ignore the request or open another
+instance without showing an additional window.
+
+##### Permissions for the `toggle`, `hide`, and `cycle` app controls
+
+`toggle`, `hide`, and `cycle` are app controls: Kiwi runs `/usr/bin/osascript`
+with a static script that asks `System Events` to act on the target process.
+macOS treats that as automation, so the first time one of these bindings fires,
+macOS may ask to allow control of `System Events`. That prompt, and the grant it
+creates, belong to the process sending the events — the `osascript` child that
+Kiwi spawns — rather than to the `kiwi` binary itself. `launch` and
+`new_window` only run `open` and need no automation grant.
+
+Review or grant it in **System Settings → Privacy & Security → Automation**,
+where the entry for the sending process lists a `System Events` checkbox. Keep
+the installed `kiwi` binary enabled in **Privacy & Security → Accessibility**
+as well, because UI scripting through System Events can also require assistive
+access.
+
+`kiwi doctor` checks Kiwi's own config, code signature, LaunchAgent, and
+Accessibility trust. It does not inspect the separate Automation grant given to
+the `osascript` child process, so an all-green `doctor` does not prove that
+`toggle`, `hide`, and `cycle` are allowed to run.
 
 #### `url`
 
@@ -352,6 +471,23 @@ physical ANSI key position when a different macOS input layout is active.
 "hyper+e" = { app = "Finder" }
 ```
 
+### Application controls
+
+```toml
+[bindings]
+# Summon Ghostty, or hide it without quitting when it is already frontmost.
+"hyper+t" = { app = "Ghostty", behavior = "toggle" }
+
+# Hide a running app without quitting it.
+"hyper+h" = { app = "Slack", behavior = "hide" }
+
+# Activate Ghostty, then rotate among its windows.
+"hyper+grave" = { app = "Ghostty", behavior = "cycle" }
+
+# Request another Safari instance/window (behavior depends on the app).
+"hyper+n" = { app = "com.apple.Safari", behavior = "new_window" }
+```
+
 ### Websites and deep links
 
 ```toml
@@ -431,7 +567,7 @@ kiwi listen
 Example output:
 
 ```text
-hyper+t  matched  app  Ghostty
+hyper+t  matched  app  Ghostty (toggle)
 hyper+p  matched  command  /Users/me/.local/bin/open-project
 hyper+z  unmatched
 ```
@@ -440,12 +576,14 @@ Interactive output is colored by chord, match state, and action type. Piped
 output is plain text. Repeats, releases, modifier-only events, Kiwi-generated
 synthetic keys, and a Hyper tap by itself are omitted. The listener uses the
 same automatic reload behavior as the daemon.
+It never posts action feedback notifications, even when `[ui].feedback` is
+`"all"`.
 
 For compact newline-delimited JSON, run `kiwi --format json listen`. Each
 observation is one object on stdout:
 
 ```json
-{"schema_version":1,"shortcut":"hyper+t","matched":true,"type":"app","action":"Ghostty"}
+{"schema_version":1,"shortcut":"hyper+t","matched":true,"type":"app","action":"Ghostty (toggle)"}
 {"schema_version":1,"shortcut":"hyper+z","matched":false,"type":null,"action":null}
 ```
 
@@ -542,10 +680,15 @@ with a stable signature and refreshes the LaunchAgent.
 3. Pressing the Hyper key holds the configured virtual modifiers. Releasing it
    without another key emits the configured tap key.
 4. Matching chords dispatch their action on a worker thread so slow commands do
-   not block keyboard input.
-5. An event-driven watcher compiles config edits off the keyboard callback and
+   not block keyboard input. Notifications use a separate worker so notification
+   delivery cannot delay later actions or their failure logs.
+5. Hyper layer transitions go to a dedicated worker. After the configured
+   delay, it starts the same Kiwi binary in a hidden helper mode and sends a
+   bounded JSON model over stdin. AppKit and its main run loop therefore stay
+   out of the event-tap process; release kills and waits for the helper.
+6. An event-driven watcher compiles config edits off the keyboard callback and
    swaps in only valid, compatible changes at an idle key boundary.
-6. A per-user LaunchAgent starts the daemon at login and restarts it if needed.
+7. A per-user LaunchAgent starts the daemon at login and restarts it if needed.
 
 The LaunchAgent is stored at
 `~/Library/LaunchAgents/io.github.cesarferreira.kiwi.plist`.
@@ -629,6 +772,36 @@ Or set the environment explicitly:
 [bindings]
 "hyper+r" = { command = "PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin my-command" }
 ```
+
+### A `hide`, `cycle`, or `toggle` binding does nothing
+
+These app controls drive `System Events` through `/usr/bin/osascript`, which
+needs an Automation grant separate from Kiwi's Accessibility permission:
+
+1. Open **System Settings → Privacy & Security → Automation** and enable
+   `System Events` under the entry for the process that sends the events. That
+   is `osascript` for the installed LaunchAgent, or the terminal application
+   you started `kiwi run` from while testing in the foreground.
+2. Confirm **Privacy & Security → Accessibility** still lists the installed
+   `kiwi` binary and that it is enabled.
+3. If macOS never prompted, or the prompt was dismissed, run
+   `tccutil reset AppleEvents` and trigger the binding again to be asked once
+   more. That command clears saved automation answers for every app on the
+   Mac, not only Kiwi.
+
+`kiwi doctor` cannot see that grant, so it can report a healthy installation
+while these behaviors stay blocked. A blocked `toggle` cannot determine whether
+the target is frontmost, so it reports the automation error instead of falling
+back to launching the app. App action failures — a denied grant, a target that
+is not running, a target without windows, or an unexpected `toggle` result —
+are written to the daemon log:
+
+```sh
+tail -n 20 ~/Library/Logs/kiwi.log
+```
+
+Look for `kiwi action failed:` lines. Later releases may report the same
+failures more visibly; on this version the log is the place to check.
 
 ### Two shortcuts are reported as duplicates
 

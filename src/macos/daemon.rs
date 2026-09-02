@@ -1,7 +1,7 @@
 use std::{
     ffi::c_void,
     path::Path,
-    process::Command,
+    process::{Command, ExitStatus, Stdio},
     sync::{
         Arc, Mutex,
         atomic::{AtomicPtr, Ordering},
@@ -32,9 +32,12 @@ use crate::{
 };
 
 use super::{
+    app_controller::{AppController, MacOsAppController},
+    cheatsheet::{CheatsheetCommand, worker as cheatsheet_worker},
     events::{EventDecoder, SYNTHETIC_EVENT_TAG},
+    feedback::{ActionJob, MacOsNotifier, Notification, Notifier, action_completion},
     key_to_keycode,
-    runtime::{ReloadNotice, ReloadingEngine},
+    runtime::{HyperLayerTransition, ReloadNotice, ReloadingEngine},
 };
 
 const CAPS_TO_F18_MAPPING: &str = r#"{"UserKeyMapping":[{"HIDKeyboardModifierMappingSrc":0x700000039,"HIDKeyboardModifierMappingDst":0x70000006D}]}"#;
@@ -71,9 +74,19 @@ pub fn run_event_tap(config_path: &Path, config: CompiledConfig) -> Result<()> {
     let decoder = Arc::new(EventDecoder::new(remap_caps));
     let tap_port = Arc::new(AtomicPtr::<c_void>::new(std::ptr::null_mut()));
     let (action_sender, action_receiver) = mpsc::channel();
+    let (notification_sender, notification_receiver) = mpsc::channel();
+    let (cheatsheet_sender, cheatsheet_receiver) = mpsc::channel();
+    thread::Builder::new()
+        .name("kiwi-cheatsheet".into())
+        .spawn(move || cheatsheet_worker(cheatsheet_receiver))
+        .context("could not start cheatsheet worker")?;
+    thread::Builder::new()
+        .name("kiwi-notifications".into())
+        .spawn(move || notification_worker(notification_receiver, MacOsNotifier))
+        .context("could not start notification worker")?;
     thread::Builder::new()
         .name("kiwi-actions".into())
-        .spawn(move || action_worker(action_receiver))
+        .spawn(move || action_worker(action_receiver, notification_sender))
         .context("could not start action worker")?;
 
     let callback_engine = Arc::clone(&engine);
@@ -115,7 +128,29 @@ pub fn run_event_tap(config_path: &Path, config: CompiledConfig) -> Result<()> {
                 Err(_) => return CallbackResult::Keep,
             };
             report_reload_notices(&callback_config_path, &handled.notices);
-            apply_decision(handled.decision, event, &action_sender, remap_caps)
+            if let Some(transition) = handled.hyper_layer {
+                let command = match transition {
+                    HyperLayerTransition::Show {
+                        rows,
+                        generation,
+                        delay_ms,
+                    } => CheatsheetCommand::Show {
+                        model: super::cheatsheet::CheatsheetModel { generation, rows },
+                        delay_ms,
+                    },
+                    HyperLayerTransition::Hide => CheatsheetCommand::Hide,
+                };
+                if let Err(error) = cheatsheet_sender.send(command) {
+                    eprintln!("kiwi cheatsheet worker stopped: {error}");
+                }
+            }
+            apply_decision(
+                handled.decision,
+                handled.action_job,
+                event,
+                &action_sender,
+                remap_caps,
+            )
         },
     )
     .map_err(|()| {
@@ -159,8 +194,9 @@ pub(crate) fn report_reload_notices(config_path: &Path, notices: &[ReloadNotice]
 
 fn apply_decision(
     decision: Decision,
+    action_job: Option<ActionJob>,
     event: &CGEvent,
-    actions: &mpsc::Sender<Action>,
+    actions: &mpsc::Sender<ActionJob>,
     strip_caps_flag: bool,
 ) -> CallbackResult {
     match decision {
@@ -180,8 +216,12 @@ fn apply_decision(
             }
         }
         Decision::Suppress => CallbackResult::Drop,
-        Decision::Trigger(action) => {
-            if let Err(error) = actions.send(action) {
+        Decision::Trigger(_) => {
+            let Some(action_job) = action_job else {
+                eprintln!("kiwi action dispatch failed: action job was not created");
+                return CallbackResult::Drop;
+            };
+            if let Err(error) = actions.send(action_job) {
                 eprintln!("kiwi action worker stopped: {error}");
             }
             CallbackResult::Drop
@@ -275,17 +315,33 @@ fn mapping_state(output: &str) -> MappingState {
     }
 }
 
-fn action_worker(receiver: mpsc::Receiver<Action>) {
-    for action in receiver {
-        if let Err(error) = execute_action(&action) {
-            eprintln!("kiwi action failed: {error:#}");
+fn action_worker(receiver: mpsc::Receiver<ActionJob>, notifications: mpsc::Sender<Notification>) {
+    let app_controller = MacOsAppController;
+    for job in receiver {
+        let outcome = execute_action(&job.action, &app_controller);
+        let completion = action_completion(&job, outcome);
+        if let Some(error) = completion.failure {
+            eprintln!("kiwi action failed: {error}");
+        }
+        if let Some(notification) = completion.notification {
+            if let Err(error) = notifications.send(notification) {
+                eprintln!("kiwi notification worker stopped: {error}");
+            }
         }
     }
 }
 
-fn execute_action(action: &Action) -> Result<()> {
+fn notification_worker(receiver: mpsc::Receiver<Notification>, notifier: impl Notifier) {
+    for notification in receiver {
+        if let Err(error) = notifier.notify(&notification) {
+            eprintln!("kiwi notification failed: {error:#}");
+        }
+    }
+}
+
+fn execute_action(action: &Action, app_controller: &impl AppController) -> Result<()> {
     match action {
-        Action::LaunchApp(app) => run_process(Command::new("/usr/bin/open").args(["-a", app])),
+        Action::App(action) => app_controller.execute(action),
         Action::OpenUrl(url) => run_process(Command::new("/usr/bin/open").arg(url)),
         Action::RunCommand(command) => run_process(Command::new("/bin/zsh").args(["-lc", command])),
         Action::SendKeys(chord) => post_chord(chord),
@@ -293,13 +349,39 @@ fn execute_action(action: &Action) -> Result<()> {
 }
 
 fn run_process(command: &mut Command) -> Result<()> {
-    let status = command
-        .status()
-        .context("could not start configured action")?;
-    if !status.success() {
-        bail!("configured action exited with {status}");
+    let captured = wait_for_process(command)?;
+    if !captured.status.success() {
+        let stderr = String::from_utf8_lossy(&captured.stderr);
+        if stderr.is_empty() {
+            bail!("configured action exited with {}", captured.status);
+        }
+        bail!(
+            "configured action exited with {}:\n{stderr}",
+            captured.status
+        );
     }
     Ok(())
+}
+
+struct CapturedProcess {
+    status: ExitStatus,
+    stderr: Vec<u8>,
+}
+
+fn wait_for_process(command: &mut Command) -> Result<CapturedProcess> {
+    let child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("could not start configured action")?;
+    let output = child
+        .wait_with_output()
+        .context("could not wait for configured action")?;
+    Ok(CapturedProcess {
+        status: output.status,
+        stderr: output.stderr,
+    })
 }
 
 fn post_chord(chord: &Chord) -> Result<()> {
@@ -343,7 +425,9 @@ fn flags_for(modifiers: &[Modifier]) -> CGEventFlags {
 
 #[cfg(test)]
 mod tests {
-    use super::{CAPS_TO_F18_MAPPING, MappingState, mapping_state};
+    use std::process::Command;
+
+    use super::{CAPS_TO_F18_MAPPING, MappingState, mapping_state, run_process, wait_for_process};
 
     #[test]
     fn uses_apples_caps_to_f18_hid_usage_mapping() {
@@ -379,5 +463,30 @@ mod tests {
             ),
             MappingState::Foreign
         );
+    }
+
+    #[test]
+    fn failed_process_error_captures_status_and_full_stderr() {
+        let error = run_process(Command::new("/bin/zsh").args([
+            "-lc",
+            "printf 'first detail\\nsecond detail\\n' >&2; exit 17",
+        ]))
+        .unwrap_err();
+        let error = format!("{error:#}");
+
+        assert!(error.contains("exit status: 17"), "{error}");
+        assert!(error.contains("first detail\nsecond detail"), "{error}");
+    }
+
+    #[test]
+    fn process_capture_discards_stdout_and_retains_stderr() {
+        let captured = wait_for_process(
+            Command::new("/bin/zsh")
+                .args(["-lc", "yes x | head -c 1048576; printf 'kept detail' >&2"]),
+        )
+        .unwrap();
+
+        assert!(captured.status.success());
+        assert_eq!(captured.stderr, b"kept detail");
     }
 }

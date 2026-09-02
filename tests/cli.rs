@@ -38,6 +38,37 @@ fn validate_command_checks_the_selected_config() {
 }
 
 #[test]
+fn validate_rejects_cheatsheet_with_more_than_64_enabled_hyper_bindings() {
+    let mut config = String::from("[ui]\ncheatsheet = true\n[bindings]\n");
+    for key in ('a'..='z').chain('0'..='9') {
+        config.push_str(&format!("\"hyper+{key}\" = {{ app = \"App{key}\" }}\n"));
+    }
+    for number in 1..=20 {
+        config.push_str(&format!(
+            "\"hyper+f{number}\" = {{ app = \"Fn{number}\" }}\n"
+        ));
+    }
+    for extra in [
+        "escape", "enter", "tab", "space", "delete", "left", "right", "up", "down",
+    ] {
+        config.push_str(&format!("\"hyper+{extra}\" = {{ app = \"App{extra}\" }}\n"));
+    }
+    let path =
+        std::env::temp_dir().join(format!("kiwi-cheatsheet-limit-{}.toml", std::process::id()));
+    fs::write(&path, config).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_kiwi"))
+        .args(["--config", path.to_str().unwrap(), "validate"])
+        .output()
+        .unwrap();
+    fs::remove_file(path).unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("cheatsheet"), "{stderr}");
+    assert!(stderr.contains("64"), "{stderr}");
+}
+
+#[test]
 fn default_config_path_is_dotfiles_friendly_on_macos() {
     let output = Command::new(env!("CARGO_BIN_EXE_kiwi"))
         .arg("config-path")
@@ -79,6 +110,49 @@ fn help_exposes_start_and_stop_commands() {
     assert!(output.status.success());
     assert!(stdout.contains("  start"));
     assert!(stdout.contains("  stop"));
+}
+
+#[test]
+fn hidden_cheatsheet_helper_parses_but_is_not_advertised() {
+    let main = Command::new(env!("CARGO_BIN_EXE_kiwi"))
+        .arg("--help")
+        .output()
+        .unwrap();
+    assert!(
+        !String::from_utf8(main.stdout)
+            .unwrap()
+            .contains("__cheatsheet")
+    );
+
+    let helper = Command::new(env!("CARGO_BIN_EXE_kiwi"))
+        .args(["__cheatsheet-overlay", "--help"])
+        .output()
+        .unwrap();
+    assert!(
+        helper.status.success(),
+        "{}",
+        String::from_utf8_lossy(&helper.stderr)
+    );
+}
+
+#[test]
+fn hidden_cheatsheet_helper_rejects_invalid_structured_input_without_opening_a_window() {
+    let output = Command::new(env!("CARGO_BIN_EXE_kiwi"))
+        .arg("__cheatsheet-overlay")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap()
+        .wait_with_output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("cheatsheet model"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]
@@ -131,6 +205,10 @@ key = "f19"
 tap = "escape"
 modifiers = ["command", "option"]
 
+[ui]
+feedback = "all"
+style = "notification"
+
 [bindings]
 "hyper+u" = { url = "https://example.com" }
 "hyper+p" = { command = "echo hi" }
@@ -177,6 +255,47 @@ modifiers = ["command", "option"]
         )
     );
     assert!(!stdout.contains("\u{1b}["));
+}
+
+#[test]
+fn list_text_and_json_distinguish_app_behaviors() {
+    let (_, text) = run_conflicts(
+        r#"
+[bindings]
+"hyper+l" = { app = "Ghostty" }
+"hyper+h" = { app = "Ghostty", behavior = "hide" }
+"hyper+c" = { app = "Ghostty", behavior = "cycle" }
+"hyper+n" = { app = "Ghostty", behavior = "new_window" }
+"hyper+t" = { app = "Ghostty", behavior = "toggle" }
+"#,
+        &["list"],
+    );
+    assert!(text.status.success());
+    let stdout = String::from_utf8(text.stdout).unwrap();
+    assert!(stdout.contains("hyper+l   app   Ghostty\n"));
+    assert!(stdout.contains("hyper+h   app   Ghostty (hide)\n"));
+    assert!(stdout.contains("hyper+c   app   Ghostty (cycle)\n"));
+    assert!(stdout.contains("hyper+n   app   Ghostty (new window)\n"));
+    assert!(stdout.contains("hyper+t   app   Ghostty (toggle)\n"));
+
+    let (_, json) = run_conflicts(
+        r#"
+[bindings]
+"hyper+h" = { app = "Ghostty", behavior = "hide" }
+"hyper+c" = { app = "Ghostty", behavior = "cycle" }
+"hyper+n" = { app = "Ghostty", behavior = "new_window" }
+"hyper+t" = { app = "Ghostty", behavior = "toggle" }
+"#,
+        &["--format", "json", "list"],
+    );
+    assert!(json.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    let bindings = json["bindings"].as_array().unwrap();
+    assert_eq!(bindings[0]["type"], "app");
+    assert_eq!(bindings[0]["action"], "Ghostty (cycle)");
+    assert_eq!(bindings[1]["action"], "Ghostty (hide)");
+    assert_eq!(bindings[2]["action"], "Ghostty (new window)");
+    assert_eq!(bindings[3]["action"], "Ghostty (toggle)");
 }
 
 #[test]
@@ -351,6 +470,29 @@ modifiers = ["command", "option"]
             path.display()
         )
     );
+}
+
+#[test]
+fn conflict_text_and_json_distinguish_app_behavior() {
+    for (behavior, expected) in [("hide", "Finder (hide)"), ("toggle", "Finder (toggle)")] {
+        let config = format!(
+            r#"
+[bindings]
+"command+space" = {{ app = "Finder", behavior = "{behavior}" }}
+"#
+        );
+        let (_, text) = run_conflicts(&config, &["list", "--conflicts"]);
+        assert_eq!(text.status.code(), Some(1));
+        assert!(String::from_utf8(text.stdout).unwrap().contains(expected));
+
+        let (_, json) = run_conflicts(&config, &["list", "--conflicts", "--format", "json"]);
+        assert_eq!(json.status.code(), Some(1));
+        let json: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+        assert_eq!(json["bindings"][0]["type"], "app");
+        assert_eq!(json["bindings"][0]["action"], expected);
+        assert_eq!(json["conflicts"][0]["type"], "app");
+        assert_eq!(json["conflicts"][0]["action"], expected);
+    }
 }
 
 #[test]

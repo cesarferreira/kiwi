@@ -222,7 +222,7 @@ mod tests {
 
     use super::{observation_for, observation_line};
     use crate::{
-        config::{Action, Config},
+        config::{Action, AppAction, AppBehavior, Config},
         engine::{EventKind, Input},
         key::{Key, Modifier},
         macos::runtime::ReloadingEngine,
@@ -256,7 +256,10 @@ mod tests {
         let cases = [
             (
                 "hyper+t",
-                Action::LaunchApp("Ghostty".into()),
+                Action::App(AppAction {
+                    target: "Ghostty".into(),
+                    behavior: AppBehavior::Launch,
+                }),
                 "hyper+t  matched  app  Ghostty",
             ),
             (
@@ -278,6 +281,29 @@ mod tests {
 
         for (chord, action, expected) in cases {
             assert_eq!(observation_line(chord, Some(&action), false), expected);
+        }
+    }
+
+    #[test]
+    fn formats_app_behaviors_in_text_and_ndjson() {
+        for (behavior, suffix) in [
+            (AppBehavior::Toggle, "toggle"),
+            (AppBehavior::Hide, "hide"),
+            (AppBehavior::Cycle, "cycle"),
+            (AppBehavior::NewWindow, "new window"),
+        ] {
+            let action = Action::App(AppAction {
+                target: "Ghostty".into(),
+                behavior,
+            });
+            assert_eq!(
+                observation_line("hyper+t", Some(&action), false),
+                format!("hyper+t  matched  app  Ghostty ({suffix})")
+            );
+            let json = super::observation_json("hyper+t", Some(&action)).unwrap();
+            let json: serde_json::Value = serde_json::from_str(&json).unwrap();
+            assert_eq!(json["type"], "app");
+            assert_eq!(json["action"], format!("Ghostty ({suffix})"));
         }
     }
 

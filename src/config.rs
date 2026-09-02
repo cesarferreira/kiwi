@@ -3,28 +3,121 @@ use std::{
     fs,
     path::Path,
     str::FromStr,
+    sync::Arc,
 };
 
 use anyhow::{Context, Result, bail};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer, Serialize, de};
 
 use crate::key::{Chord, Key, Modifier};
 
+const MAX_BINDING_SUMMARY_ROWS: usize = 64;
+const MAX_BINDING_SUMMARY_TEXT_CHARS: usize = 160;
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct BindingSummary {
+    pub key: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub action: String,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Action {
-    LaunchApp(String),
+    App(AppAction),
     OpenUrl(String),
     RunCommand(String),
     SendKeys(Chord),
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AppAction {
+    pub target: String,
+    pub behavior: AppBehavior,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum AppBehavior {
+    #[default]
+    Launch,
+    Toggle,
+    Hide,
+    Cycle,
+    NewWindow,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum FeedbackPolicy {
+    Off,
+    #[default]
+    Errors,
+    All,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum FeedbackStyle {
+    #[default]
+    Notification,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct UiConfig {
+    #[serde(deserialize_with = "deserialize_feedback_policy")]
+    pub feedback: FeedbackPolicy,
+    #[serde(deserialize_with = "deserialize_feedback_style")]
+    pub style: FeedbackStyle,
+    pub cheatsheet: bool,
+    pub cheatsheet_delay_ms: u64,
+}
+
+impl Default for UiConfig {
+    fn default() -> Self {
+        Self {
+            feedback: FeedbackPolicy::Errors,
+            style: FeedbackStyle::Notification,
+            cheatsheet: true,
+            cheatsheet_delay_ms: 1000,
+        }
+    }
+}
+
+impl FromStr for AppBehavior {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "launch" => Ok(Self::Launch),
+            "toggle" => Ok(Self::Toggle),
+            "hide" => Ok(Self::Hide),
+            "cycle" => Ok(Self::Cycle),
+            "new_window" => Ok(Self::NewWindow),
+            other => bail!(
+                "unknown app behavior `{other}`; expected `launch`, `toggle`, `hide`, `cycle`, or `new_window`"
+            ),
+        }
+    }
+}
+
 impl Action {
     pub fn type_and_value(&self) -> (&'static str, String) {
         match self {
-            Self::LaunchApp(value) => ("app", value.clone()),
+            Self::App(action) => ("app", action.display_value()),
             Self::OpenUrl(value) => ("url", value.clone()),
             Self::RunCommand(value) => ("command", value.clone()),
             Self::SendKeys(value) => ("keys", value.to_string()),
+        }
+    }
+}
+
+impl AppAction {
+    fn display_value(&self) -> String {
+        match self.behavior {
+            AppBehavior::Launch => self.target.clone(),
+            AppBehavior::Toggle => format!("{} (toggle)", self.target),
+            AppBehavior::Hide => format!("{} (hide)", self.target),
+            AppBehavior::Cycle => format!("{} (cycle)", self.target),
+            AppBehavior::NewWindow => format!("{} (new window)", self.target),
         }
     }
 }
@@ -36,6 +129,8 @@ pub struct Config {
     pub hyper: HyperSpec,
     #[serde(default)]
     pub bindings: BTreeMap<String, BindingSpec>,
+    #[serde(default)]
+    pub ui: UiConfig,
 }
 
 impl Config {
@@ -50,9 +145,13 @@ impl Config {
     }
 
     pub fn compile(self) -> Result<CompiledConfig> {
+        if self.ui.cheatsheet_delay_ms > 5000 {
+            bail!("`ui.cheatsheet_delay_ms` must be in 0..=5000");
+        }
         let hyper = self.hyper.compile()?;
         let mut bindings = BTreeMap::new();
         let mut compiled_bindings: HashMap<Key, Vec<(Chord, Action)>> = HashMap::new();
+        let mut hyper_binding_summaries = Vec::new();
 
         for (source, binding) in self.bindings {
             if !binding.enabled {
@@ -67,6 +166,10 @@ impl Config {
             let action = binding
                 .compile()
                 .map_err(|error| anyhow::anyhow!("invalid binding `{source}`: {error:#}"))?;
+            if chord.has(Modifier::Hyper) {
+                hyper_binding_summaries
+                    .push((normalized.clone(), binding_summary(&chord, &action)));
+            }
             bindings.insert(normalized, action.clone());
             compiled_bindings
                 .entry(chord.key.clone())
@@ -74,10 +177,25 @@ impl Config {
                 .push((chord, action));
         }
 
+        hyper_binding_summaries.sort_by(|left, right| left.0.cmp(&right.0));
+        if self.ui.cheatsheet && hyper_binding_summaries.len() > MAX_BINDING_SUMMARY_ROWS {
+            bail!(
+                "`[ui].cheatsheet` requires at most {MAX_BINDING_SUMMARY_ROWS} enabled Hyper bindings; found {}",
+                hyper_binding_summaries.len()
+            );
+        }
+        let hyper_binding_summary = hyper_binding_summaries
+            .into_iter()
+            .map(|(_, summary)| summary)
+            .collect::<Vec<_>>()
+            .into();
+
         Ok(CompiledConfig {
             hyper,
             bindings,
+            ui: self.ui,
             compiled_bindings,
+            hyper_binding_summary,
         })
     }
 }
@@ -86,10 +204,16 @@ impl Config {
 pub struct CompiledConfig {
     pub hyper: Hyper,
     pub bindings: BTreeMap<String, Action>,
+    pub ui: UiConfig,
     compiled_bindings: HashMap<Key, Vec<(Chord, Action)>>,
+    hyper_binding_summary: Arc<[BindingSummary]>,
 }
 
 impl CompiledConfig {
+    pub fn hyper_binding_summary(&self) -> Arc<[BindingSummary]> {
+        Arc::clone(&self.hyper_binding_summary)
+    }
+
     pub(crate) fn action_for(&self, actual: &Chord) -> Option<&Action> {
         self.compiled_bindings
             .get(&actual.key)?
@@ -104,6 +228,41 @@ impl CompiledConfig {
             })
             .map(|(_, action)| action)
     }
+}
+
+fn binding_summary(chord: &Chord, action: &Action) -> BindingSummary {
+    let mut parts: Vec<_> = chord
+        .modifiers
+        .iter()
+        .filter(|modifier| **modifier != Modifier::Hyper)
+        .map(|modifier| modifier.as_str())
+        .collect();
+    parts.push(chord.key.as_str());
+    let (kind, action) = action.type_and_value();
+    BindingSummary {
+        key: parts.join("+"),
+        kind: bounded_summary_text(kind),
+        action: bounded_summary_text(&action),
+    }
+}
+
+fn bounded_summary_text(value: &str) -> String {
+    let mut output: String = value
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .take(MAX_BINDING_SUMMARY_TEXT_CHARS)
+        .collect();
+    if value.chars().count() > MAX_BINDING_SUMMARY_TEXT_CHARS {
+        output.pop();
+        output.push('…');
+    }
+    output
 }
 
 #[derive(Debug, Deserialize)]
@@ -161,6 +320,7 @@ pub struct Hyper {
 #[serde(deny_unknown_fields)]
 pub struct BindingSpec {
     pub app: Option<String>,
+    pub behavior: Option<String>,
     pub url: Option<String>,
     pub command: Option<String>,
     pub keys: Option<String>,
@@ -183,9 +343,21 @@ impl BindingSpec {
             bail!("a binding must define exactly one of `app`, `url`, `command`, or `keys`");
         }
 
+        if self.behavior.is_some() && self.app.is_none() {
+            bail!("`behavior` is only valid with `app`");
+        }
+
         if let Some(app) = self.app {
             require_nonempty("app", &app)?;
-            return Ok(Action::LaunchApp(app));
+            let behavior = self
+                .behavior
+                .as_deref()
+                .unwrap_or("launch")
+                .parse::<AppBehavior>()?;
+            return Ok(Action::App(AppAction {
+                target: app,
+                behavior,
+            }));
         }
         if let Some(url) = self.url {
             require_nonempty("url", &url)?;
@@ -213,6 +385,32 @@ fn require_nonempty(field: &str, value: &str) -> Result<()> {
         bail!("`{field}` cannot be empty");
     }
     Ok(())
+}
+
+fn deserialize_feedback_policy<'de, D>(deserializer: D) -> Result<FeedbackPolicy, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    match String::deserialize(deserializer)?.as_str() {
+        "off" => Ok(FeedbackPolicy::Off),
+        "errors" => Ok(FeedbackPolicy::Errors),
+        "all" => Ok(FeedbackPolicy::All),
+        other => Err(de::Error::custom(format!(
+            "unknown feedback `{other}`; expected `off`, `errors`, or `all`"
+        ))),
+    }
+}
+
+fn deserialize_feedback_style<'de, D>(deserializer: D) -> Result<FeedbackStyle, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    match String::deserialize(deserializer)?.as_str() {
+        "notification" => Ok(FeedbackStyle::Notification),
+        other => Err(de::Error::custom(format!(
+            "unknown feedback style `{other}`; expected `notification`"
+        ))),
+    }
 }
 
 pub(crate) fn chord_matches(binding: &Chord, actual: &Chord) -> bool {
