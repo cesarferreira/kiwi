@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2026-09-02
+
+### 🚀 Features
+
+- Add JSON command output
+- Report shortcut conflicts
+- Add first-class app actions
+- Add frontmost app toggle
+- Show action feedback notifications
+- Add Hyper cheatsheet overlay
+
+### 💼 Other
+
+- Default cheatsheet
 ## [0.3.1] - 2026-08-31
 
 ### 🚀 Features
