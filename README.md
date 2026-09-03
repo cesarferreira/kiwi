@@ -49,15 +49,20 @@ brew install cesarferreira/tap/kiwi
 kiwi install
 ```
 
-`kiwi install` signs the binary with your stable Apple code-signing identity,
-creates the LaunchAgent, and starts it. Run it again after each
-`brew upgrade kiwi`, because the new binary needs to be signed and the
-LaunchAgent needs to point at its new path.
+Homebrew and GitHub releases ship an unsigned binary. `kiwi install` signs
+that copy with **your** Apple identity, creates the LaunchAgent, and starts
+it. Run it again after each `brew upgrade kiwi`, because the new binary needs
+to be signed and the LaunchAgent needs to point at its new path.
 
-A stable signature matters because macOS Accessibility permission is tied to the
-identity of the executable. `kiwi install` prefers a **Developer ID
-Application** identity, then an **Apple Development** identity. Check that macOS
-can see one:
+A paid Apple Developer Program membership is not required. A free **Apple
+Development** certificate is enough — add your Apple ID in Xcode
+(**Settings → Accounts**) and create an Apple Development certificate if
+`security` does not list one yet.
+
+A stable signature matters because macOS Accessibility permission is tied to
+the identity of the executable. `kiwi install` prefers a **Developer ID
+Application** identity if you already have one, then an **Apple Development**
+identity. Check that macOS can see one:
 
 ```sh
 security find-identity -p codesigning -v
