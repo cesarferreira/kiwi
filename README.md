@@ -22,8 +22,6 @@
     <a href="#configuration">Configuration</a>
     &nbsp;·&nbsp;
     <a href="#commands">Commands</a>
-    &nbsp;·&nbsp;
-    <a href="#development">Development</a>
   </p>
 
 </div>
@@ -357,19 +355,22 @@ shortcuts. Keep one form.
 `UserKeyMapping` it does not own. Remove the software that created it, then run
 `kiwi restart`.
 
-<a id="development"></a>
-## Development
+<a id="performance"></a>
+## Performance
 
-```sh
-cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo test
-```
+`kiwi` stays asleep between keyboard events and keeps the event-tap callback
+small. A release build measured on a 14-core Apple M4 Pro with macOS 26.6.2,
+Rust 1.98.0, and ten configured bindings produced:
 
-Build and install from source with `make install-release`, then run
-`kiwi install` to sign the binary and refresh the LaunchAgent. Use
-`cargo run -- --config /path/to/config.toml run` to iterate with logs in the
-terminal.
+| Metric | Result |
+|---|---:|
+| Release binary | 1.01 MiB |
+| Idle daemon | <0.1% sampled CPU, 3.3 MiB physical footprint |
+| CLI startup and config validation | ~4.0 ms |
+| Config parse and compile | ~5.5 µs |
+| Ordinary key down/up cycle | ~20 ns |
+| Mapped Hyper shortcut cycle | ~68 ns |
+| Unmapped Hyper shortcut cycle | ~61 ns |
 
 ## License
 
