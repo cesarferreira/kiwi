@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.1] - 2026-09-03
+
+### 💼 Other
+
+- Added image
+- Updated readme
+- Update README to remove development and add performance
+- Updated readme
+
+### 📚 Documentation
+
+- Trim README to a focused user guide
 ## [0.4.0] - 2026-09-02
 
 ### 🚀 Features
