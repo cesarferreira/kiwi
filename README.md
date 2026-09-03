@@ -19,6 +19,10 @@
     &nbsp;·&nbsp;
     <a href="#quickstart">Quickstart</a>
     &nbsp;·&nbsp;
+    <a href="#configuration">Configuration</a>
+    &nbsp;·&nbsp;
+    <a href="#commands">Commands</a>
+    &nbsp;·&nbsp;
     <a href="#development">Development</a>
   </p>
 
@@ -26,9 +30,9 @@
 
 ---
 
-`kiwi` replaces the common Karabiner-Elements + launcher combination with
-one small native daemon. It can turn Caps Lock into Hyper when held and Escape
-when tapped, launch applications, open URLs, run shell commands, and emit other
+`kiwi` replaces the common Karabiner-Elements + launcher combination with one
+small native daemon. It can turn Caps Lock into Hyper when held and Escape when
+tapped, launch applications, open URLs, run shell commands, and emit other
 keyboard shortcuts.
 
 - One declarative TOML configuration
@@ -37,69 +41,48 @@ keyboard shortcuts.
 - App, URL, command, and key-sequence actions
 - Generic and side-specific modifiers
 - Automatic config reloads, including symlinked dotfiles
-- A read-only live shortcut listener
-- A LaunchAgent for automatic startup
 - No Karabiner-Elements or Raycast dependency
 
 <a id="install"></a>
 ## Install
-
-The shortest path on macOS:
 
 ```sh
 brew install cesarferreira/tap/kiwi
 kiwi install
 ```
 
-`kiwi install` signs the Homebrew-installed binary with your stable Apple
-code-signing identity, creates the LaunchAgent, and starts it. Run it again
-after each `brew upgrade kiwi`, because the new binary needs to be signed and
-the LaunchAgent needs to point at its new Homebrew Cellar path.
+`kiwi install` signs the binary with your stable Apple code-signing identity,
+creates the LaunchAgent, and starts it. Run it again after each
+`brew upgrade kiwi`, because the new binary needs to be signed and the
+LaunchAgent needs to point at its new path.
 
-### Requirements
-
-- macOS
-- Accessibility permission for the installed `kiwi` binary
-- A stable Apple code-signing identity
-
-Check that macOS can see a signing identity:
+A stable signature matters because macOS Accessibility permission is tied to the
+identity of the executable. `kiwi install` prefers a **Developer ID
+Application** identity, then an **Apple Development** identity. Check that macOS
+can see one:
 
 ```sh
 security find-identity -p codesigning -v
 ```
 
-`kiwi install` prefers a **Developer ID Application** identity, then an
-**Apple Development** identity. A stable signature matters because macOS
-Accessibility permission is tied to the identity of the executable.
-
 <a id="quickstart"></a>
-## Build from source
+## Quickstart
 
-To build from source instead, install Rust 1.85 or newer and ensure
-`~/.cargo/bin` is on your `PATH`, then run:
-
-```sh
-git clone https://github.com/cesarferreira/kiwi.git
-cd kiwi
-make install-release
-```
-
-Open Accessibility settings:
+Open Accessibility settings, add the installed `kiwi` binary, and enable it:
 
 ```sh
 kiwi permissions
 ```
 
-Add `~/.cargo/bin/kiwi` in **System Settings → Privacy & Security →
-Accessibility**, enable it, then run:
+Then create a config and start the daemon:
 
 ```sh
+kiwi init
 kiwi restart
 kiwi doctor
 ```
 
-The default configuration is `~/.config/kiwi/config.toml`. A minimal
-working configuration:
+The default configuration is `~/.config/kiwi/config.toml`:
 
 ```toml
 [hyper]
@@ -109,73 +92,40 @@ modifiers = ["command", "control", "option", "shift"]
 
 [ui]
 feedback = "errors"
-style = "notification"
 cheatsheet = true
-cheatsheet_delay_ms = 1000
 
 [bindings]
-"hyper+t" = { app = "Ghostty" }
-"hyper+s" = { app = "Slack" }
-"hyper+b" = { url = "https://github.com" }
-"hyper+a" = { keys = "control+a" }
-```
-
-## Complete configuration example
-
-This example demonstrates every action type and the main chord features:
-
-```toml
-[hyper]
-key = "caps_lock"
-tap = "escape"
-modifiers = ["command", "control", "option", "shift"]
-
-[ui]
-feedback = "errors"
-style = "notification"
-cheatsheet = true
-cheatsheet_delay_ms = 1000
-
-[bindings]
-# Launch or focus an application by name (the default behavior).
+# Launch or focus an app.
 "hyper+t" = { app = "Ghostty" }
 
-# Toggle, hide, cycle windows, or request a new window.
-"hyper+return" = { app = "Ghostty", behavior = "toggle" }
-"hyper+h" = { app = "Ghostty", behavior = "hide" }
-"hyper+grave" = { app = "Ghostty", behavior = "cycle" }
-"hyper+n" = { app = "Safari", behavior = "new_window" }
+# Summon it, or hide it when it is already frontmost.
+"hyper+s" = { app = "Slack", behavior = "toggle" }
 
-# Open a web URL or an application deep link.
+# Open a URL or an application deep link.
 "hyper+b" = { url = "https://github.com" }
-"hyper+m" = { url = "mailto:" }
 
-# Run through /bin/zsh -lc.
+# Run a command through /bin/zsh -lc.
 "hyper+r" = { command = "/Users/me/.local/bin/open-project" }
 
 # Emit another keyboard shortcut.
 "hyper+a" = { keys = "control+a" }
 
-# Generic modifiers match either the left or right key.
-"option+j" = { keys = "down" }
-
-# Side-specific modifiers are also supported.
+# Side-specific modifiers work outside the Hyper layer.
 "left_option+h" = { keys = "left" }
-"left_option+k" = { keys = "up" }
-"left_option+l" = { keys = "right" }
 
 # Keep a binding in the file without activating it.
 "hyper+x" = { command = "say disabled", enabled = false }
 ```
 
-Unknown fields, invalid names, duplicate normalized chords, and bindings with
-more or fewer than one action are rejected by `kiwi validate`.
+Run `kiwi validate` after editing. Unknown fields, invalid names, duplicate
+normalized chords, and bindings with more or fewer than one action are rejected.
 
-## Configuration reference
+<a id="configuration"></a>
+## Configuration
 
 ### `[hyper]`
 
-The optional `[hyper]` table defines a dual-role key:
+Optional. Defines a dual-role key.
 
 | Field | Meaning | Default |
 |---|---|---|
@@ -183,40 +133,12 @@ The optional `[hyper]` table defines a dual-role key:
 | `tap` | Key emitted when Hyper is pressed and released alone | `"escape"` |
 | `modifiers` | Modifiers held while Hyper is down | `["command", "control", "option", "shift"]` |
 
-For the standard Caps Lock setup:
-
-```toml
-[hyper]
-key = "caps_lock"
-tap = "escape"
-modifiers = ["command", "control", "option", "shift"]
-```
-
-You can choose another supported key or a smaller modifier set:
-
-```toml
-[hyper]
-key = "f19"
-tap = "escape"
-modifiers = ["command", "option"]
-```
-
-When `caps_lock` is the Hyper key, `kiwi` owns a macOS `hidutil` mapping
-from Caps Lock to F18. F18 is therefore reserved and should not be configured
-as a separate shortcut.
+When `caps_lock` is the Hyper key, `kiwi` owns a macOS `hidutil` mapping from
+Caps Lock to F18, so F18 is reserved and should not be bound separately.
 
 ### `[ui]`
 
-The optional `[ui]` table controls action notifications and the Hyper
-cheatsheet overlay:
-
-```toml
-[ui]
-feedback = "errors"
-style = "notification"
-cheatsheet = true
-cheatsheet_delay_ms = 1000
-```
+Optional. Controls action notifications and the Hyper cheatsheet overlay.
 
 | Field | Values | Default |
 |---|---|---|
@@ -225,47 +147,23 @@ cheatsheet_delay_ms = 1000
 | `cheatsheet` | `true` or `false` | `true` |
 | `cheatsheet_delay_ms` | `0` through `5000` | `1000` |
 
-With `cheatsheet = true`, `kiwi validate` rejects more than 64 enabled Hyper
-bindings so the overlay can show every one. Each displayed key, type, and
-action is truncated to 160 characters. Maps larger than 64 Hyper bindings
-remain valid when the cheatsheet is off.
+`errors` reports failed actions, `all` also reports successful ones, and `off`
+disables feedback. Full command stderr stays in the Kiwi log. Notifications use
+macOS `display notification`, so depending on the macOS version they may be
+attributed to `osascript` and may need enabling in **System Settings →
+Notifications**.
 
-`errors` reports failed app, URL, command, and key actions. `all` also reports
-successful actions, while `off` disables action feedback. Notifications show
-the triggering chord and action plus a concise failure detail. Full command
-stderr and errors remain in the Kiwi log.
-
-Kiwi uses macOS `display notification` through a static `osascript` program;
-notification text is passed as arguments and is not inserted into script
-source. Depending on the macOS version, notifications may be attributed to
-`osascript` or macOS rather than Kiwi and may need to be enabled in **System
-Settings → Notifications**. This is a system notification, not a custom HUD.
-The cheatsheet is separate: when enabled, holding Hyper past the configured
-delay opens a native, high-contrast panel listing every enabled Hyper binding's
-key, type, and action (all of them, up to the 64-binding limit). Hyper+Shift
-and other residual modifiers are shown with the key. The panel is non-activating
-and ignores mouse events, so it neither
-takes keyboard focus nor intercepts clicks. It is placed near the top center of
-the primary, menu-bar macOS screen and disappears immediately when Hyper is
-released. As a stuck-key safeguard, it also closes after 30 seconds and will
-not reopen until Hyper is released and pressed again.
-
-Version 1 opens the cheatsheet only for the `[hyper]` key. Ordinary physical
-modifiers and additional `[[dual_role]]` keys do not open it, and non-Hyper
-bindings are omitted. A quick chord or release before `cheatsheet_delay_ms`
-cancels the pending panel to avoid flashing. Changes to `[ui]` and bindings
-reload at the same idle key boundary and appear on the next Hyper hold.
+With `cheatsheet = true`, holding Hyper past `cheatsheet_delay_ms` shows a panel
+listing every enabled Hyper binding. `kiwi validate` then rejects more than 64
+enabled Hyper bindings so the overlay can show all of them; larger maps stay
+valid with the cheatsheet off.
 
 ### `[bindings]`
 
-Each entry maps a chord to an inline table. A binding must define exactly one
-of `app`, `url`, `command`, or `keys`. `enabled` is optional and defaults to
-`true`.
+Each entry maps a chord to an inline table with exactly one of `app`, `url`,
+`command`, or `keys`. `enabled` is optional and defaults to `true`.
 
 #### `app`
-
-An app binding accepts an optional `behavior`. Omitting it is backward
-compatible and defaults to `launch`:
 
 ```toml
 [bindings]
@@ -279,54 +177,20 @@ compatible and defaults to `launch`:
 
 | Behavior | Meaning |
 |---|---|
-| `launch` | Launch or focus the app with macOS `open` (default) |
-| `toggle` | Launch the app when it is not running, activate it when backgrounded, or hide it without quitting when frontmost |
-| `hide` | Hide a running app without quitting it; reports an action error when it is not running |
-| `cycle` | Select the next accessibility window of the configured running app, raise it, then activate that app |
+| `launch` | Launch or focus the app (default) |
+| `toggle` | Launch when not running, activate when backgrounded, hide when frontmost |
+| `hide` | Hide a running app without quitting it |
+| `cycle` | Raise the next window of the running app, then activate it |
 | `new_window` | Ask macOS for a new app instance/window |
 
-`behavior` is valid only alongside `app`. App names, absolute `.app` paths, and
-reverse-DNS bundle identifiers such as `com.apple.Safari` are supported. Names
-and paths use `open -a` (or `open -na` for `new_window`); bundle identifiers use
-`open -b` (or `open -n -b`). Toggle, hide, and cycle resolve only an
-already-running System Events process and never launch the target while
-resolving it. Toggle inspects every process matching the configured target in
-one atomic operation: if any of them is frontmost it hides that process,
-otherwise it activates a matching one. Only when no process matches does Kiwi
-launch the target with `open`. Hiding does not quit the app.
-
-Window cycling uses the target process's accessibility window list and
-`AXMain`, `AXFocused`, and `AXRaise`; it never sends a global Command+grave.
-This depends on Accessibility permission and on the app exposing usable
-accessibility windows. `new_window` is app-dependent: single-window utilities
-and apps that restore one shared window may ignore the request or open another
-instance without showing an additional window.
-
-##### Permissions for the `toggle`, `hide`, and `cycle` app controls
-
-`toggle`, `hide`, and `cycle` are app controls: Kiwi runs `/usr/bin/osascript`
-with a static script that asks `System Events` to act on the target process.
-macOS treats that as automation, so the first time one of these bindings fires,
-macOS may ask to allow control of `System Events`. That prompt, and the grant it
-creates, belong to the process sending the events — the `osascript` child that
-Kiwi spawns — rather than to the `kiwi` binary itself. `launch` and
-`new_window` only run `open` and need no automation grant.
-
-Review or grant it in **System Settings → Privacy & Security → Automation**,
-where the entry for the sending process lists a `System Events` checkbox. Keep
-the installed `kiwi` binary enabled in **Privacy & Security → Accessibility**
-as well, because UI scripting through System Events can also require assistive
-access.
-
-`kiwi doctor` checks Kiwi's own config, code signature, LaunchAgent, and
-Accessibility trust. It does not inspect the separate Automation grant given to
-the `osascript` child process, so an all-green `doctor` does not prove that
-`toggle`, `hide`, and `cycle` are allowed to run.
+App names, absolute `.app` paths, and bundle identifiers such as
+`com.apple.Safari` are all supported. `toggle`, `hide`, and `cycle` never launch
+the target while resolving it, and they need an Automation grant — see
+[Troubleshooting](#troubleshooting).
 
 #### `url`
 
-Opens a URL with its registered macOS handler. Web URLs and application deep
-links both work:
+Opens a URL with its registered macOS handler.
 
 ```toml
 [bindings]
@@ -335,60 +199,33 @@ links both work:
 "hyper+m" = { url = "mailto:hello@example.com" }
 ```
 
-The Raycast example only works if Raycast is installed and registered that URL
-scheme; `kiwi` itself does not depend on Raycast.
-
 #### `command`
 
-Runs a command asynchronously with `/bin/zsh -lc`:
+Runs a command asynchronously with `/bin/zsh -lc`. LaunchAgents receive a
+minimal `PATH` (`/usr/bin:/bin:/usr/sbin:/sbin`), so use absolute paths or set
+`PATH` inside the command. Commands run with your user privileges, so treat the
+config as executable code.
 
 ```toml
 [bindings]
 "hyper+n" = { command = "/Users/me/.local/bin/new-note" }
-"hyper+p" = { command = "open /Users/me/code" }
 "hyper+v" = { command = "pbpaste | /usr/bin/sed 's/^/→ /' | pbcopy" }
 ```
 
-LaunchAgents receive a minimal `PATH`:
-
-```text
-/usr/bin:/bin:/usr/sbin:/sbin
-```
-
-Use absolute executable paths or set `PATH` inside your command/script.
-Commands run with your user privileges, so treat the config as executable code.
-
 #### `keys`
 
-Emits another key or chord as synthetic keyboard events:
+Emits another key or chord. It may contain the regular modifiers below, but not
+the virtual `hyper` modifier.
 
 ```toml
 [bindings]
 "hyper+a" = { keys = "control+a" }
 "left_option+h" = { keys = "left" }
-"left_option+j" = { keys = "down" }
-"left_option+k" = { keys = "up" }
-"left_option+l" = { keys = "right" }
 ```
-
-An emitted `keys` action may contain the regular modifiers listed below, but it
-cannot contain the virtual `hyper` modifier.
-
-#### `enabled`
-
-Set `enabled = false` to retain a binding without registering it:
-
-```toml
-[bindings]
-"hyper+x" = { app = "Xcode", enabled = false }
-```
-
-Disabled entries are ignored before their chord and action are validated.
 
 ## Chord syntax
 
-A chord consists of zero or more modifiers followed by one key, separated by
-`+`:
+A chord is zero or more modifiers followed by one key, separated by `+`:
 
 ```text
 hyper+t
@@ -397,14 +234,11 @@ left_option+h
 f12
 ```
 
-Names are case-insensitive, and `-` inside a name is normalized to `_` (for
-example, `left-option+h` equals `left_option+h`). Modifier order does not
-matter. As a result, `Command+Shift+P` and `shift+command+p` describe the same
-chord and cannot both be configured.
-
-A generic modifier such as `option` matches either physical Option key. A
-side-specific binding such as `left_option+h` takes precedence over a generic
-`option+h` binding when both could match.
+Names are case-insensitive, `-` is normalized to `_`, and modifier order does
+not matter, so `Command+Shift+P` and `shift+command+p` are the same chord and
+cannot both be configured. A generic modifier such as `option` matches either
+physical key, and a side-specific binding such as `left_option+h` takes
+precedence over a generic `option+h`.
 
 ### Supported modifiers
 
@@ -416,14 +250,10 @@ side-specific binding such as `left_option+h` takes precedence over a generic
 | `option` | `alt` |
 | `shift` | — |
 | `fn` | `function` |
-| `left_command` | `left_cmd` |
-| `right_command` | `right_cmd` |
-| `left_control` | `left_ctrl` |
-| `right_control` | `right_ctrl` |
-| `left_option` | `left_alt` |
-| `right_option` | `right_alt` |
-| `left_shift` | — |
-| `right_shift` | — |
+| `left_command` / `right_command` | `left_cmd` / `right_cmd` |
+| `left_control` / `right_control` | `left_ctrl` / `right_ctrl` |
+| `left_option` / `right_option` | `left_alt` / `right_alt` |
+| `left_shift` / `right_shift` | — |
 
 ### Supported keys
 
@@ -436,139 +266,37 @@ side-specific binding such as `left_option+h` takes precedence over a generic
 | Navigation | `left`, `right`, `up`, `down`, `home`, `end`, `page_up`, `page_down` |
 | Punctuation | `minus`, `equal`, `left_bracket`, `right_bracket`, `backslash`, `semicolon`, `quote`, `comma`, `period`, `slash`, `grave` |
 
-Key aliases:
+Aliases: `esc` → `escape`, `return` → `enter`, `backspace` → `delete`, and
+`left_arrow` / `right_arrow` / `up_arrow` / `down_arrow` → `left` / `right` /
+`up` / `down`.
 
-| Alias | Canonical name |
+Key names use ANSI keyboard positions, so letter shortcuts stay tied to their
+physical key when a different macOS input layout is active.
+
+<a id="commands"></a>
+## Commands
+
+| Command | Purpose |
 |---|---|
-| `esc` | `escape` |
-| `return` | `enter` |
-| `backspace` | `delete` |
-| `left_arrow` | `left` |
-| `right_arrow` | `right` |
-| `up_arrow` | `up` |
-| `down_arrow` | `down` |
+| `kiwi init` | Create the default config if it does not exist (`--force` to replace) |
+| `kiwi validate` | Parse and validate the selected config |
+| `kiwi list` | Print enabled shortcuts as a table |
+| `kiwi list --conflicts` | Report shortcuts that collide with common app defaults |
+| `kiwi listen` | Show resolved shortcuts live without executing actions |
+| `kiwi run` | Run the daemon in the foreground |
+| `kiwi install` | Validate, sign, install, and start the LaunchAgent |
+| `kiwi start` / `stop` / `restart` | Control the installed LaunchAgent |
+| `kiwi uninstall` | Remove the LaunchAgent and owned HID mapping |
+| `kiwi status` | Print a LaunchAgent status summary |
+| `kiwi doctor` | Check config, signing, Accessibility, and LaunchAgent health |
+| `kiwi permissions` | Open macOS Accessibility settings |
+| `kiwi config-path` | Print the active config path |
 
-Key names use ANSI keyboard positions. Letter shortcuts remain tied to their
-physical ANSI key position when a different macOS input layout is active.
+Global options: `--config <PATH>` selects a non-default configuration, and
+`--format text|json` selects the output format for `list`, `listen`, and
+`status` (`listen` emits NDJSON).
 
-## Recipes
-
-### Hyper navigation layer
-
-```toml
-[bindings]
-"hyper+h" = { keys = "left" }
-"hyper+j" = { keys = "down" }
-"hyper+k" = { keys = "up" }
-"hyper+l" = { keys = "right" }
-"hyper+u" = { keys = "page_up" }
-"hyper+d" = { keys = "page_down" }
-```
-
-### Application launcher
-
-```toml
-[bindings]
-"hyper+t" = { app = "Ghostty" }
-"hyper+s" = { app = "Slack" }
-"hyper+f" = { app = "Firefox" }
-"hyper+e" = { app = "Finder" }
-```
-
-### Application controls
-
-```toml
-[bindings]
-# Summon Ghostty, or hide it without quitting when it is already frontmost.
-"hyper+t" = { app = "Ghostty", behavior = "toggle" }
-
-# Hide a running app without quitting it.
-"hyper+h" = { app = "Slack", behavior = "hide" }
-
-# Activate Ghostty, then rotate among its windows.
-"hyper+grave" = { app = "Ghostty", behavior = "cycle" }
-
-# Request another Safari instance/window (behavior depends on the app).
-"hyper+n" = { app = "com.apple.Safari", behavior = "new_window" }
-```
-
-### Websites and deep links
-
-```toml
-[bindings]
-"hyper+g" = { url = "https://github.com" }
-"hyper+i" = { url = "https://github.com/issues" }
-"hyper+m" = { url = "mailto:" }
-```
-
-### Dotfiles scripts
-
-Using scripts keeps complex behavior testable and portable:
-
-```toml
-[bindings]
-"hyper+n" = { command = "/Users/me/dotfiles/bin/new-note" }
-"hyper+w" = { command = "/Users/me/dotfiles/bin/open-workspace" }
-```
-
-### tmux prefix
-
-This matches the Karabiner rule “Hyper+A → Control+A”:
-
-```toml
-[bindings]
-"hyper+a" = { keys = "control+a" }
-```
-
-## Dotfiles and multiple Macs
-
-Keep the canonical file in your dotfiles and symlink it into the default
-location:
-
-```sh
-mkdir -p ~/.config/kiwi
-ln -s ~/dotfiles/kiwi/config.toml ~/.config/kiwi/config.toml
-kiwi validate
-```
-
-Alternatively, use a custom path:
-
-```sh
-kiwi --config ~/dotfiles/kiwi/config.toml validate
-kiwi --config ~/dotfiles/kiwi/config.toml install
-```
-
-The LaunchAgent written by the second command remembers that custom path.
-Machine-specific app names, executable paths, and URL handlers still need to
-exist on each Mac. Run `kiwi doctor` after deploying.
-
-## Automatic reloads
-
-The daemon watches the selected config and reloads valid edits automatically.
-This also works when `~/.config/kiwi/config.toml` is a symlink into your
-dotfiles. Changes are applied after the current key sequence finishes, so an
-edit cannot split a held chord across two configurations.
-
-If an edit is invalid, Kiwi reports the error in its log and keeps the last
-valid configuration active. Fixing the file triggers another reload; no
-restart is needed. Changes to bindings, the Hyper tap action, and its emitted
-modifiers all reload live.
-
-Changing `[hyper].key` still requires `kiwi restart` because the physical HID
-mapping is established when the process starts. Kiwi rejects that part of a
-live reload and prints the restart instruction instead of leaving the keyboard
-in a mixed state.
-
-## Inspect live shortcuts
-
-Run the listener alongside the installed daemon to see how physical key presses
-resolve without executing actions or changing events:
-
-```sh
-kiwi listen
-```
-
-Example output:
+`kiwi listen` is read-only and safe to run alongside the daemon:
 
 ```text
 hyper+t  matched  app  Ghostty (toggle)
@@ -576,275 +304,72 @@ hyper+p  matched  command  /Users/me/.local/bin/open-project
 hyper+z  unmatched
 ```
 
-Interactive output is colored by chord, match state, and action type. Piped
-output is plain text. Repeats, releases, modifier-only events, Kiwi-generated
-synthetic keys, and a Hyper tap by itself are omitted. The listener uses the
-same automatic reload behavior as the daemon.
-It never posts action feedback notifications, even when `[ui].feedback` is
-`"all"`.
+## Dotfiles and automatic reloads
 
-For compact newline-delimited JSON, run `kiwi --format json listen`. Each
-observation is one object on stdout:
-
-```json
-{"schema_version":1,"shortcut":"hyper+t","matched":true,"type":"app","action":"Ghostty (toggle)"}
-{"schema_version":1,"shortcut":"hyper+z","matched":false,"type":null,"action":null}
-```
-
-Config reload notices remain on stderr.
-
-## Commands
-
-Global options:
-
-- `--config <PATH>` selects a non-default configuration.
-- `--format text|json` selects output format and defaults to `text`. JSON is
-  available for `list`, `listen`, and `status`.
-
-| Command | Purpose |
-|---|---|
-| `kiwi init` | Create the default config if it does not exist |
-| `kiwi init --force` | Replace the config with the generated default |
-| `kiwi validate` | Parse and validate the selected config |
-| `kiwi list` | Print enabled shortcuts as a colored table, or one JSON object |
-| `kiwi list --conflicts` | Report enabled shortcuts that collide with curated common defaults |
-| `kiwi run` | Run the daemon in the foreground |
-| `kiwi listen` | Show resolved shortcuts without executing actions; JSON is NDJSON |
-| `kiwi install` | Validate, stably sign, install, and start the LaunchAgent |
-| `kiwi start` | Start an installed LaunchAgent |
-| `kiwi stop` | Stop the LaunchAgent and restore Caps Lock without uninstalling |
-| `kiwi uninstall` | Stop and remove the LaunchAgent and owned HID mapping |
-| `kiwi restart` | Restart the installed LaunchAgent |
-| `kiwi status` | Print a concise LaunchAgent status summary, or one JSON object |
-| `kiwi doctor` | Check config, signing, Accessibility, and LaunchAgent health |
-| `kiwi permissions` | Open macOS Accessibility settings |
-| `kiwi config-path` | Print the active config path |
-
-Use `kiwi run` while developing to keep logs in the terminal. Stop the
-installed agent first if necessary so two daemons do not process the same
-shortcut. `kiwi listen` is read-only and is designed to run alongside either
-one.
-
-JSON output uses schema version 1 and never includes terminal color escapes:
+Keep the canonical file in your dotfiles and symlink it into place:
 
 ```sh
-kiwi --format json list
-kiwi --format json status
+mkdir -p ~/.config/kiwi
+ln -s ~/dotfiles/kiwi/config.toml ~/.config/kiwi/config.toml
+kiwi validate
 ```
 
-### Shortcut conflict report
-
-`kiwi list --conflicts` compares each enabled configured triggering chord with
-the bundled catalog of common macOS, Safari, Chrome, Finder, terminal/readline,
-Ghostty, and Slack defaults. Generic catalog modifiers match side-specific
-bindings, so `command+space` also detects `left_command+space`.
-
-The report is a heuristic, non-exhaustive diagnostic: application shortcuts can
-be customized, defaults can change, and Kiwi does not inspect the frontmost
-application or system preferences. Version 1 compares only the configured
-triggering chord. It does not expand Hyper or inspect keys emitted by an action.
-
-The command exits with status 1 when conflicts are found and 0 when none are
-found. JSON mode adds a `conflicts` array only for the conflict report:
+A custom path works too, and the LaunchAgent remembers it:
 
 ```sh
-kiwi --format json list --conflicts
-kiwi list --conflicts --format json
+kiwi --config ~/dotfiles/kiwi/config.toml install
 ```
 
-## Installation workflows
+The daemon watches the selected config — symlinks included — and reloads valid
+edits automatically at an idle key boundary, so an edit cannot split a held
+chord. Invalid edits are logged and the last valid configuration keeps running.
+Only a `[hyper].key` change requires `kiwi restart`.
 
-Install an optimized binary and configure the LaunchAgent:
-
-```sh
-make install-release
-```
-
-For a debug build:
-
-```sh
-make install
-```
-
-If you install directly with Cargo, finish by running `kiwi install`:
-
-```sh
-cargo install --path . --force
-kiwi install
-```
-
-`cargo install` produces an ad-hoc signature. The second command replaces it
-with a stable signature and refreshes the LaunchAgent.
-
-## How it works
-
-1. For the default Caps Lock setup, `kiwi` applies a narrowly scoped
-   `hidutil` mapping from Caps Lock to F18.
-2. A macOS event tap observes keyboard events globally.
-3. Pressing the Hyper key holds the configured virtual modifiers. Releasing it
-   without another key emits the configured tap key.
-4. Matching chords dispatch their action on a worker thread so slow commands do
-   not block keyboard input. Notifications use a separate worker so notification
-   delivery cannot delay later actions or their failure logs.
-5. Hyper layer transitions go to a dedicated worker. After the configured
-   delay, it starts the same Kiwi binary in a hidden helper mode and sends a
-   bounded JSON model over stdin. AppKit and its main run loop therefore stay
-   out of the event-tap process; release kills and waits for the helper.
-6. An event-driven watcher compiles config edits off the keyboard callback and
-   swaps in only valid, compatible changes at an idle key boundary.
-7. A per-user LaunchAgent starts the daemon at login and restarts it if needed.
-
-The LaunchAgent is stored at
-`~/Library/LaunchAgents/io.github.cesarferreira.kiwi.plist`.
-
-## Performance
-
-`kiwi` stays asleep between keyboard events and keeps the event-tap callback
-small. A release build measured on a 14-core Apple M4 Pro with macOS 26.6.2,
-Rust 1.98.0, and ten configured bindings produced:
-
-| Metric | Result |
-|---|---:|
-| Release binary | 1.01 MiB |
-| Idle daemon | <0.1% sampled CPU, 3.3 MiB physical footprint |
-| CLI startup and config validation | ~4.0 ms |
-| Config parse and compile | ~5.5 µs |
-| Ordinary key down/up cycle | ~20 ns |
-| Mapped Hyper shortcut cycle | ~68 ns |
-| Unmapped Hyper shortcut cycle | ~61 ns |
-
-The engine figures are medians from 11 samples with one to two million cycles
-per sample. They measure in-process routing only; macOS event delivery and the
-application, URL, or command launched by an action are outside that timing.
-Run the same dependency-free benchmark with:
-
-```sh
-cargo bench --bench engine
-```
-
-Idle CPU was sampled for 15 seconds with Instruments Time Profiler (zero CPU
-samples), physical memory with `footprint`, and CLI startup over 100 runs with
-`hyperfine --shell=none`.
-
+<a id="troubleshooting"></a>
 ## Troubleshooting
 
-### Caps Lock acts like normal Caps Lock
+**Caps Lock acts like normal Caps Lock.** Run `kiwi restart && kiwi doctor`, then
+check `hidutil property --get UserKeyMapping` for a Caps Lock → F18 mapping. If
+`doctor` reports an Accessibility problem, remove any stale `kiwi` entry, add the
+binary again, enable it, and restart.
 
-```sh
-kiwi restart
-kiwi doctor
-hidutil property --get UserKeyMapping
-```
+**`doctor` says the binary is ad-hoc signed.** Run `kiwi install` again. Avoid
+finishing an update with only `cargo install`; it replaces the stable signature.
 
-For the default setup, `hidutil` should report a Caps Lock → F18 mapping. Its
-values are displayed as decimal HID usage codes. If `doctor` reports an
-Accessibility problem, remove any stale `kiwi` entry from Accessibility,
-add `~/.cargo/bin/kiwi` again, enable it, and restart.
+**A command works in Terminal but not from a binding.** The LaunchAgent has a
+minimal `PATH`. Use an absolute path, or set `PATH` inside the command.
 
-### `doctor` says the binary is ad-hoc signed
-
-```sh
-kiwi install
-kiwi doctor
-```
-
-Avoid finishing an update with only `cargo install`; it replaces the stably
-signed executable.
-
-### The LaunchAgent is not running
-
-```sh
-kiwi install
-kiwi status
-```
-
-`Boot-out failed: 3: No such process` is harmless during installation when no
-older agent was loaded. Installation continues by loading the new agent.
-
-### A command works in Terminal but not from a binding
-
-The LaunchAgent has a minimal `PATH`. Use absolute paths:
-
-```toml
-[bindings]
-"hyper+r" = { command = "/opt/homebrew/bin/my-command" }
-```
-
-Or set the environment explicitly:
-
-```toml
-[bindings]
-"hyper+r" = { command = "PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin my-command" }
-```
-
-### A `hide`, `cycle`, or `toggle` binding does nothing
-
-These app controls drive `System Events` through `/usr/bin/osascript`, which
-needs an Automation grant separate from Kiwi's Accessibility permission:
-
-1. Open **System Settings → Privacy & Security → Automation** and enable
-   `System Events` under the entry for the process that sends the events. That
-   is `osascript` for the installed LaunchAgent, or the terminal application
-   you started `kiwi run` from while testing in the foreground.
-2. Confirm **Privacy & Security → Accessibility** still lists the installed
-   `kiwi` binary and that it is enabled.
-3. If macOS never prompted, or the prompt was dismissed, run
-   `tccutil reset AppleEvents` and trigger the binding again to be asked once
-   more. That command clears saved automation answers for every app on the
-   Mac, not only Kiwi.
-
-`kiwi doctor` cannot see that grant, so it can report a healthy installation
-while these behaviors stay blocked. A blocked `toggle` cannot determine whether
-the target is frontmost, so it reports the automation error instead of falling
-back to launching the app. App action failures — a denied grant, a target that
-is not running, a target without windows, or an unexpected `toggle` result —
-are written to the daemon log:
+**A `hide`, `cycle`, or `toggle` binding does nothing.** These drive `System
+Events` through `osascript`, which needs an Automation grant separate from
+Accessibility. Enable `System Events` in **System Settings → Privacy & Security →
+Automation** under the sending process. `kiwi doctor` cannot see that grant, so it
+can report a healthy install while these stay blocked. Failures are logged:
 
 ```sh
 tail -n 20 ~/Library/Logs/kiwi.log
 ```
 
-Look for `kiwi action failed:` lines. Later releases may report the same
-failures more visibly; on this version the log is the place to check.
+**Two shortcuts are reported as duplicates.** Chord names are normalized, so
+modifier order, aliases, case, and `-` versus `_` do not create distinct
+shortcuts. Keep one form.
 
-### Two shortcuts are reported as duplicates
+**Another HID mapping is already installed.** `kiwi` refuses to overwrite a
+`UserKeyMapping` it does not own. Remove the software that created it, then run
+`kiwi restart`.
 
-Chord names are normalized. Modifier order, aliases, case, and `-` versus `_`
-do not create distinct shortcuts. Keep only one normalized form.
-
-### Config changes are not active
-
-Check the daemon log for a reload error, then validate the selected file:
-
-```sh
-kiwi validate
-tail -n 20 ~/Library/Logs/kiwi.log
-```
-
-Invalid edits leave the last valid configuration running. Correct the file and
-it reloads automatically. Only a `[hyper].key` change requires `kiwi restart`.
-
-### Another HID mapping is already installed
-
-`kiwi` refuses to overwrite a `UserKeyMapping` it does not own. Remove or
-disable the software that created the mapping, clear that mapping deliberately,
-then run `kiwi restart`.
-
+<a id="development"></a>
 ## Development
 
 ```sh
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test
-cargo build
 ```
 
-Run with a temporary config:
-
-```sh
-cargo run -- --config /path/to/config.toml validate
-cargo run -- --config /path/to/config.toml run
-```
+Build and install from source with `make install-release`, then run
+`kiwi install` to sign the binary and refresh the LaunchAgent. Use
+`cargo run -- --config /path/to/config.toml run` to iterate with logs in the
+terminal.
 
 ## License
 
