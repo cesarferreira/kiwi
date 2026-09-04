@@ -1,7 +1,7 @@
-use std::{collections::BTreeSet, sync::Arc};
+use std::collections::BTreeSet;
 
 use crate::{
-    config::{Action, BindingSummary, CompiledConfig, FeedbackPolicy},
+    config::{Action, CompiledConfig, FeedbackPolicy},
     key::{Chord, Key, Modifier},
 };
 
@@ -82,15 +82,6 @@ impl Engine {
 
     pub fn hyper_key(&self) -> &Key {
         &self.config.hyper.key
-    }
-
-    pub(crate) fn cheatsheet(&self) -> Option<(Arc<[BindingSummary]>, u64)> {
-        self.config.ui.cheatsheet.then(|| {
-            (
-                self.config.hyper_binding_summary(),
-                self.config.ui.cheatsheet_delay_ms,
-            )
-        })
     }
 
     pub(crate) fn feedback_policy(&self) -> FeedbackPolicy {

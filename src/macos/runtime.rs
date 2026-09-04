@@ -1,8 +1,8 @@
-use std::sync::{Arc, mpsc::Receiver};
+use std::sync::mpsc::Receiver;
 
 use crate::{
-    config::{Action, BindingSummary, CompiledConfig},
-    engine::{Decision, Engine, EventKind, Input},
+    config::{Action, CompiledConfig},
+    engine::{Decision, Engine, Input},
     key::{Chord, Key},
 };
 
@@ -14,21 +14,10 @@ pub(crate) enum ReloadNotice {
     HyperKeyChanged,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum HyperLayerTransition {
-    Show {
-        rows: Arc<[BindingSummary]>,
-        generation: u64,
-        delay_ms: u64,
-    },
-    Hide,
-}
-
 pub(crate) struct HandledEvent {
     pub decision: Decision,
     pub chord: Option<Chord>,
     pub action_job: Option<ActionJob>,
-    pub hyper_layer: Option<HyperLayerTransition>,
     pub notices: Vec<ReloadNotice>,
 }
 
@@ -48,7 +37,6 @@ pub(crate) struct ReloadingEngine {
     engine: Engine,
     config_receiver: Receiver<CompiledConfig>,
     pending_config: Option<CompiledConfig>,
-    generation: u64,
 }
 
 impl ReloadingEngine {
@@ -57,7 +45,6 @@ impl ReloadingEngine {
             engine: Engine::new(config),
             config_receiver,
             pending_config: None,
-            generation: 0,
         }
     }
 
@@ -75,7 +62,6 @@ impl ReloadingEngine {
         self.apply_if_idle(&mut notices);
 
         let preview_chord = self.engine.preview_chord(&input);
-        let hyper_layer = self.hyper_transition(&input);
         let chord = preview.then(|| preview_chord.clone()).flatten();
         let pressed_key = match &input {
             Input::Key { key, .. } => Some(key.clone()),
@@ -98,28 +84,7 @@ impl ReloadingEngine {
             decision,
             chord,
             action_job,
-            hyper_layer,
             notices,
-        }
-    }
-
-    fn hyper_transition(&self, input: &Input) -> Option<HyperLayerTransition> {
-        let Input::Key { key, kind, repeat } = input else {
-            return None;
-        };
-        if key != self.engine.hyper_key() || *repeat {
-            return None;
-        }
-        match kind {
-            EventKind::Down => {
-                let (rows, delay_ms) = self.engine.cheatsheet()?;
-                Some(HyperLayerTransition::Show {
-                    rows,
-                    generation: self.generation,
-                    delay_ms,
-                })
-            }
-            EventKind::Up => Some(HyperLayerTransition::Hide),
         }
     }
 
@@ -144,7 +109,6 @@ impl ReloadingEngine {
         if let Some(config) = self.pending_config.take() {
             let binding_count = config.bindings.len();
             self.engine.replace_config(config);
-            self.generation = self.generation.wrapping_add(1);
             notices.push(ReloadNotice::Applied(binding_count));
         }
     }
@@ -154,7 +118,7 @@ impl ReloadingEngine {
 mod tests {
     use std::sync::mpsc;
 
-    use super::{HyperLayerTransition, ReloadNotice, ReloadingEngine};
+    use super::{ReloadNotice, ReloadingEngine};
     use crate::{
         config::{Action, AppAction, AppBehavior, Config, FeedbackPolicy},
         engine::{Decision, EventKind, Input},
@@ -186,87 +150,6 @@ mod tests {
             kind: EventKind::Up,
             repeat: false,
         }
-    }
-
-    #[test]
-    fn hyper_down_and_up_emit_cheatsheet_transitions_without_repeat_duplicates() {
-        let initial = config(
-            r#"
-            [ui]
-            cheatsheet = true
-            cheatsheet_delay_ms = 425
-
-            [bindings]
-            "hyper+a" = { app = "Arc" }
-            "left_option+h" = { keys = "left" }
-            "#,
-        );
-        let expected_rows = initial.hyper_binding_summary();
-        let (_sender, receiver) = mpsc::channel();
-        let mut runtime = ReloadingEngine::new(initial, receiver);
-
-        let down = runtime.handle(press("caps_lock"));
-        let HyperLayerTransition::Show {
-            rows,
-            generation,
-            delay_ms,
-        } = down.hyper_layer.unwrap()
-        else {
-            panic!("expected show transition");
-        };
-        assert_eq!(delay_ms, 425);
-        assert_eq!(generation, 0);
-        assert!(std::sync::Arc::ptr_eq(&rows, &expected_rows));
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].key, "a");
-
-        let repeat = runtime.handle(Input::Key {
-            key: "caps_lock".parse().unwrap(),
-            kind: EventKind::Down,
-            repeat: true,
-        });
-        assert!(repeat.hyper_layer.is_none());
-        assert_eq!(
-            runtime.handle(release("caps_lock")).hyper_layer,
-            Some(HyperLayerTransition::Hide)
-        );
-    }
-
-    #[test]
-    fn reload_changes_the_model_and_generation_on_the_next_hold() {
-        let initial = config(
-            r#"
-            [ui]
-            cheatsheet = true
-            [bindings]
-            "hyper+a" = { app = "Old" }
-            "#,
-        );
-        let replacement = config(
-            r#"
-            [ui]
-            cheatsheet = true
-            cheatsheet_delay_ms = 500
-            [bindings]
-            "hyper+b" = { app = "New" }
-            "#,
-        );
-        let (sender, receiver) = mpsc::channel();
-        let mut runtime = ReloadingEngine::new(initial, receiver);
-        sender.send(replacement).unwrap();
-
-        let down = runtime.handle(press("caps_lock"));
-        let HyperLayerTransition::Show {
-            rows,
-            generation,
-            delay_ms,
-        } = down.hyper_layer.unwrap()
-        else {
-            panic!("expected show transition");
-        };
-        assert_eq!(delay_ms, 500);
-        assert_eq!(generation, 1);
-        assert_eq!(rows[0].key, "b");
     }
 
     #[test]
