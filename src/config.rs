@@ -3,24 +3,12 @@ use std::{
     fs,
     path::Path,
     str::FromStr,
-    sync::Arc,
 };
 
 use anyhow::{Context, Result, bail};
-use serde::{Deserialize, Deserializer, Serialize, de};
+use serde::{Deserialize, Deserializer, de};
 
 use crate::key::{Chord, Key, Modifier};
-
-const MAX_BINDING_SUMMARY_ROWS: usize = 64;
-const MAX_BINDING_SUMMARY_TEXT_CHARS: usize = 160;
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct BindingSummary {
-    pub key: String,
-    #[serde(rename = "type")]
-    pub kind: String,
-    pub action: String,
-}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Action {
@@ -67,8 +55,6 @@ pub struct UiConfig {
     pub feedback: FeedbackPolicy,
     #[serde(deserialize_with = "deserialize_feedback_style")]
     pub style: FeedbackStyle,
-    pub cheatsheet: bool,
-    pub cheatsheet_delay_ms: u64,
 }
 
 impl Default for UiConfig {
@@ -76,8 +62,6 @@ impl Default for UiConfig {
         Self {
             feedback: FeedbackPolicy::Errors,
             style: FeedbackStyle::Notification,
-            cheatsheet: true,
-            cheatsheet_delay_ms: 1000,
         }
     }
 }
@@ -145,13 +129,9 @@ impl Config {
     }
 
     pub fn compile(self) -> Result<CompiledConfig> {
-        if self.ui.cheatsheet_delay_ms > 5000 {
-            bail!("`ui.cheatsheet_delay_ms` must be in 0..=5000");
-        }
         let hyper = self.hyper.compile()?;
         let mut bindings = BTreeMap::new();
         let mut compiled_bindings: HashMap<Key, Vec<(Chord, Action)>> = HashMap::new();
-        let mut hyper_binding_summaries = Vec::new();
 
         for (source, binding) in self.bindings {
             if !binding.enabled {
@@ -166,10 +146,6 @@ impl Config {
             let action = binding
                 .compile()
                 .map_err(|error| anyhow::anyhow!("invalid binding `{source}`: {error:#}"))?;
-            if chord.has(Modifier::Hyper) {
-                hyper_binding_summaries
-                    .push((normalized.clone(), binding_summary(&chord, &action)));
-            }
             bindings.insert(normalized, action.clone());
             compiled_bindings
                 .entry(chord.key.clone())
@@ -177,25 +153,11 @@ impl Config {
                 .push((chord, action));
         }
 
-        hyper_binding_summaries.sort_by(|left, right| left.0.cmp(&right.0));
-        if self.ui.cheatsheet && hyper_binding_summaries.len() > MAX_BINDING_SUMMARY_ROWS {
-            bail!(
-                "`[ui].cheatsheet` requires at most {MAX_BINDING_SUMMARY_ROWS} enabled Hyper bindings; found {}",
-                hyper_binding_summaries.len()
-            );
-        }
-        let hyper_binding_summary = hyper_binding_summaries
-            .into_iter()
-            .map(|(_, summary)| summary)
-            .collect::<Vec<_>>()
-            .into();
-
         Ok(CompiledConfig {
             hyper,
             bindings,
             ui: self.ui,
             compiled_bindings,
-            hyper_binding_summary,
         })
     }
 }
@@ -206,14 +168,9 @@ pub struct CompiledConfig {
     pub bindings: BTreeMap<String, Action>,
     pub ui: UiConfig,
     compiled_bindings: HashMap<Key, Vec<(Chord, Action)>>,
-    hyper_binding_summary: Arc<[BindingSummary]>,
 }
 
 impl CompiledConfig {
-    pub fn hyper_binding_summary(&self) -> Arc<[BindingSummary]> {
-        Arc::clone(&self.hyper_binding_summary)
-    }
-
     pub(crate) fn action_for(&self, actual: &Chord) -> Option<&Action> {
         self.compiled_bindings
             .get(&actual.key)?
@@ -228,41 +185,6 @@ impl CompiledConfig {
             })
             .map(|(_, action)| action)
     }
-}
-
-fn binding_summary(chord: &Chord, action: &Action) -> BindingSummary {
-    let mut parts: Vec<_> = chord
-        .modifiers
-        .iter()
-        .filter(|modifier| **modifier != Modifier::Hyper)
-        .map(|modifier| modifier.as_str())
-        .collect();
-    parts.push(chord.key.as_str());
-    let (kind, action) = action.type_and_value();
-    BindingSummary {
-        key: parts.join("+"),
-        kind: bounded_summary_text(kind),
-        action: bounded_summary_text(&action),
-    }
-}
-
-fn bounded_summary_text(value: &str) -> String {
-    let mut output: String = value
-        .chars()
-        .map(|character| {
-            if character.is_control() {
-                ' '
-            } else {
-                character
-            }
-        })
-        .take(MAX_BINDING_SUMMARY_TEXT_CHARS)
-        .collect();
-    if value.chars().count() > MAX_BINDING_SUMMARY_TEXT_CHARS {
-        output.pop();
-        output.push('…');
-    }
-    output
 }
 
 #[derive(Debug, Deserialize)]

@@ -14,7 +14,7 @@ use kiwi_keymapper::{
     conflicts::{Conflict, find_conflicts},
     macos::{
         LABEL, accessibility_is_trusted, launch_agent_plist, listen_event_tap, remove_caps_remap,
-        run_event_tap, run_overlay_helper,
+        run_event_tap,
     },
 };
 use serde::Serialize;
@@ -79,9 +79,6 @@ enum Command {
     Permissions,
     /// Print the active config path
     ConfigPath,
-    #[command(hide = true)]
-    #[command(name = "__cheatsheet-overlay")]
-    CheatsheetOverlay,
 }
 
 pub fn run() -> Result<ExitCode> {
@@ -132,7 +129,6 @@ pub fn run() -> Result<ExitCode> {
             println!("{}", config_path.display());
             Ok(())
         }
-        Command::CheatsheetOverlay => run_overlay_helper(),
     }?;
     Ok(ExitCode::SUCCESS)
 }

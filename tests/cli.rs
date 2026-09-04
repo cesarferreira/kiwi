@@ -38,37 +38,6 @@ fn validate_command_checks_the_selected_config() {
 }
 
 #[test]
-fn validate_rejects_cheatsheet_with_more_than_64_enabled_hyper_bindings() {
-    let mut config = String::from("[ui]\ncheatsheet = true\n[bindings]\n");
-    for key in ('a'..='z').chain('0'..='9') {
-        config.push_str(&format!("\"hyper+{key}\" = {{ app = \"App{key}\" }}\n"));
-    }
-    for number in 1..=20 {
-        config.push_str(&format!(
-            "\"hyper+f{number}\" = {{ app = \"Fn{number}\" }}\n"
-        ));
-    }
-    for extra in [
-        "escape", "enter", "tab", "space", "delete", "left", "right", "up", "down",
-    ] {
-        config.push_str(&format!("\"hyper+{extra}\" = {{ app = \"App{extra}\" }}\n"));
-    }
-    let path =
-        std::env::temp_dir().join(format!("kiwi-cheatsheet-limit-{}.toml", std::process::id()));
-    fs::write(&path, config).unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_kiwi"))
-        .args(["--config", path.to_str().unwrap(), "validate"])
-        .output()
-        .unwrap();
-    fs::remove_file(path).unwrap();
-
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("cheatsheet"), "{stderr}");
-    assert!(stderr.contains("64"), "{stderr}");
-}
-
-#[test]
 fn default_config_path_is_dotfiles_friendly_on_macos() {
     let output = Command::new(env!("CARGO_BIN_EXE_kiwi"))
         .arg("config-path")
@@ -110,49 +79,6 @@ fn help_exposes_start_and_stop_commands() {
     assert!(output.status.success());
     assert!(stdout.contains("  start"));
     assert!(stdout.contains("  stop"));
-}
-
-#[test]
-fn hidden_cheatsheet_helper_parses_but_is_not_advertised() {
-    let main = Command::new(env!("CARGO_BIN_EXE_kiwi"))
-        .arg("--help")
-        .output()
-        .unwrap();
-    assert!(
-        !String::from_utf8(main.stdout)
-            .unwrap()
-            .contains("__cheatsheet")
-    );
-
-    let helper = Command::new(env!("CARGO_BIN_EXE_kiwi"))
-        .args(["__cheatsheet-overlay", "--help"])
-        .output()
-        .unwrap();
-    assert!(
-        helper.status.success(),
-        "{}",
-        String::from_utf8_lossy(&helper.stderr)
-    );
-}
-
-#[test]
-fn hidden_cheatsheet_helper_rejects_invalid_structured_input_without_opening_a_window() {
-    let output = Command::new(env!("CARGO_BIN_EXE_kiwi"))
-        .arg("__cheatsheet-overlay")
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .unwrap()
-        .wait_with_output()
-        .unwrap();
-
-    assert!(!output.status.success());
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("cheatsheet model"),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
 }
 
 #[test]

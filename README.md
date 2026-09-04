@@ -95,7 +95,6 @@ modifiers = ["command", "control", "option", "shift"]
 
 [ui]
 feedback = "errors"
-cheatsheet = true
 
 [bindings]
 # Launch or focus an app.
@@ -141,25 +140,18 @@ Caps Lock to F18, so F18 is reserved and should not be bound separately.
 
 ### `[ui]`
 
-Optional. Controls action notifications and the Hyper cheatsheet overlay.
+Optional. Controls action notifications.
 
 | Field | Values | Default |
 |---|---|---|
 | `feedback` | `"off"`, `"errors"`, or `"all"` | `"errors"` |
 | `style` | `"notification"` | `"notification"` |
-| `cheatsheet` | `true` or `false` | `true` |
-| `cheatsheet_delay_ms` | `0` through `5000` | `1000` |
 
 `errors` reports failed actions, `all` also reports successful ones, and `off`
 disables feedback. Full command stderr stays in the Kiwi log. Notifications use
 macOS `display notification`, so depending on the macOS version they may be
 attributed to `osascript` and may need enabling in **System Settings →
 Notifications**.
-
-With `cheatsheet = true`, holding Hyper past `cheatsheet_delay_ms` shows a panel
-listing every enabled Hyper binding. `kiwi validate` then rejects more than 64
-enabled Hyper bindings so the overlay can show all of them; larger maps stay
-valid with the cheatsheet off.
 
 ### `[bindings]`
 

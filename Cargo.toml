@@ -29,9 +29,6 @@ toml = "1.1.4"
 core-foundation = "0.10.1"
 core-graphics = "0.25.0"
 notify = "8.2.0"
-objc2 = "0.6.4"
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSApplication", "NSColor", "NSControl", "NSFont", "NSFontDescriptor", "NSGraphics", "NSPanel", "NSParagraphStyle", "NSResponder", "NSRunningApplication", "NSScreen", "NSTextField", "NSView", "NSWindow", "objc2-core-foundation"] }
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSGeometry", "NSString"] }
 
 [profile.release]
 lto = "thin"
