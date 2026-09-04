@@ -345,6 +345,16 @@ fn execute_action(action: &Action, app_controller: &impl AppController) -> Resul
         Action::OpenUrl(url) => run_process(Command::new("/usr/bin/open").arg(url)),
         Action::RunCommand(command) => run_process(Command::new("/bin/zsh").args(["-lc", command])),
         Action::SendKeys(chord) => post_chord(chord),
+        Action::Sequence(steps) => {
+            for step in steps {
+                execute_action(step, app_controller)?;
+            }
+            Ok(())
+        }
+        Action::Wait(duration) => {
+            thread::sleep(*duration);
+            Ok(())
+        }
     }
 }
 

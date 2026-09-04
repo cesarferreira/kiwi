@@ -270,6 +270,53 @@ fn compiles_app_behaviors_and_defaults_to_launch() {
 }
 
 #[test]
+fn compiles_a_sequence_of_url_wait_and_key_steps() {
+    let compiled = Config::from_toml(
+        r#"
+        [bindings]
+        "hyper+y" = { sequence = [
+          { url = "https://www.youtube.com" },
+          { wait_ms = 300 },
+          { keys = "slash" },
+        ] }
+        "#,
+    )
+    .unwrap()
+    .compile()
+    .unwrap();
+
+    let (kind, value) = compiled.bindings["hyper+y"].type_and_value();
+    assert_eq!(kind, "sequence");
+    assert_eq!(
+        value,
+        "url https://www.youtube.com → wait 300ms → keys slash"
+    );
+}
+
+#[test]
+fn rejects_invalid_sequence_steps() {
+    for (sequence, expected) in [
+        ("[]", "at least one step"),
+        (
+            r#"[{ url = "https://example.com", keys = "slash" }]"#,
+            "exactly one",
+        ),
+        ("[{ wait_ms = 5001 }]", "wait_ms"),
+        (r#"[{ keys = "hyper+y" }]"#, "virtual `hyper`"),
+    ] {
+        let config = Config::from_toml(&format!(
+            "[bindings]\n\"hyper+y\" = {{ sequence = {sequence} }}"
+        ))
+        .unwrap();
+        let error = config.compile().unwrap_err().to_string();
+        assert!(
+            error.contains(expected),
+            "expected `{expected}` in `{error}"
+        );
+    }
+}
+
+#[test]
 fn rejects_behavior_without_app_and_unknown_behavior() {
     for (binding, expected) in [
         (

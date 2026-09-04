@@ -31,6 +31,7 @@ cheatsheet_delay_ms = 1000
 # Other supported actions:
 # "hyper+b" = { url = "https://example.com" }
 # "hyper+c" = { command = "open -a Calendar" }
+# "hyper+y" = { sequence = [{ url = "https://www.youtube.com" }, { wait_ms = 300 }, { keys = "slash" }] }
 "#;
 
 #[cfg(target_os = "macos")]

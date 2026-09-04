@@ -4,6 +4,7 @@ use std::{
     path::Path,
     str::FromStr,
     sync::Arc,
+    time::Duration,
 };
 
 use anyhow::{Context, Result, bail};
@@ -28,6 +29,8 @@ pub enum Action {
     OpenUrl(String),
     RunCommand(String),
     SendKeys(Chord),
+    Sequence(Vec<Action>),
+    Wait(Duration),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -106,6 +109,18 @@ impl Action {
             Self::OpenUrl(value) => ("url", value.clone()),
             Self::RunCommand(value) => ("command", value.clone()),
             Self::SendKeys(value) => ("keys", value.to_string()),
+            Self::Sequence(steps) => (
+                "sequence",
+                steps
+                    .iter()
+                    .map(|step| {
+                        let (kind, value) = step.type_and_value();
+                        format!("{kind} {value}")
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" → "),
+            ),
+            Self::Wait(duration) => ("wait", format!("{}ms", duration.as_millis())),
         }
     }
 }
@@ -324,8 +339,20 @@ pub struct BindingSpec {
     pub url: Option<String>,
     pub command: Option<String>,
     pub keys: Option<String>,
+    pub sequence: Option<Vec<SequenceStepSpec>>,
     #[serde(default = "enabled_by_default")]
     pub enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SequenceStepSpec {
+    pub app: Option<String>,
+    pub behavior: Option<String>,
+    pub url: Option<String>,
+    pub command: Option<String>,
+    pub keys: Option<String>,
+    pub wait_ms: Option<u64>,
 }
 
 impl BindingSpec {
@@ -335,45 +362,101 @@ impl BindingSpec {
             self.url.is_some(),
             self.command.is_some(),
             self.keys.is_some(),
+            self.sequence.is_some(),
         ]
         .into_iter()
         .filter(|present| *present)
         .count();
         if count != 1 {
-            bail!("a binding must define exactly one of `app`, `url`, `command`, or `keys`");
+            bail!(
+                "a binding must define exactly one of `app`, `url`, `command`, `keys`, or `sequence`"
+            );
         }
 
         if self.behavior.is_some() && self.app.is_none() {
             bail!("`behavior` is only valid with `app`");
         }
 
-        if let Some(app) = self.app {
-            require_nonempty("app", &app)?;
-            let behavior = self
-                .behavior
-                .as_deref()
-                .unwrap_or("launch")
-                .parse::<AppBehavior>()?;
-            return Ok(Action::App(AppAction {
-                target: app,
-                behavior,
-            }));
+        if let Some(sequence) = self.sequence {
+            if sequence.is_empty() {
+                bail!("a `sequence` must contain at least one step");
+            }
+            return sequence
+                .into_iter()
+                .map(SequenceStepSpec::compile)
+                .collect::<Result<Vec<_>>>()
+                .map(Action::Sequence);
         }
-        if let Some(url) = self.url {
-            require_nonempty("url", &url)?;
-            return Ok(Action::OpenUrl(url));
-        }
-        if let Some(command) = self.command {
-            require_nonempty("command", &command)?;
-            return Ok(Action::RunCommand(command));
-        }
-        let keys = self.keys.expect("exactly one action was present");
-        let chord: Chord = keys.parse().context("invalid `keys` action")?;
-        if chord.has(Modifier::Hyper) {
-            bail!("a `keys` action cannot emit the virtual `hyper` modifier");
-        }
-        Ok(Action::SendKeys(chord))
+
+        compile_atomic_action(self.app, self.behavior, self.url, self.command, self.keys)
     }
+}
+
+impl SequenceStepSpec {
+    fn compile(self) -> Result<Action> {
+        let count = [
+            self.app.is_some(),
+            self.url.is_some(),
+            self.command.is_some(),
+            self.keys.is_some(),
+            self.wait_ms.is_some(),
+        ]
+        .into_iter()
+        .filter(|present| *present)
+        .count();
+        if count != 1 {
+            bail!(
+                "a sequence step must define exactly one of `app`, `url`, `command`, `keys`, or `wait_ms`"
+            );
+        }
+        if let Some(wait_ms) = self.wait_ms {
+            if self.behavior.is_some() {
+                bail!("`behavior` is only valid with `app`");
+            }
+            if wait_ms > 5000 {
+                bail!("`wait_ms` must be in 0..=5000");
+            }
+            return Ok(Action::Wait(Duration::from_millis(wait_ms)));
+        }
+        compile_atomic_action(self.app, self.behavior, self.url, self.command, self.keys)
+    }
+}
+
+fn compile_atomic_action(
+    app: Option<String>,
+    behavior: Option<String>,
+    url: Option<String>,
+    command: Option<String>,
+    keys: Option<String>,
+) -> Result<Action> {
+    if behavior.is_some() && app.is_none() {
+        bail!("`behavior` is only valid with `app`");
+    }
+    if let Some(app) = app {
+        require_nonempty("app", &app)?;
+        let behavior = behavior
+            .as_deref()
+            .unwrap_or("launch")
+            .parse::<AppBehavior>()?;
+        return Ok(Action::App(AppAction {
+            target: app,
+            behavior,
+        }));
+    }
+    if let Some(url) = url {
+        require_nonempty("url", &url)?;
+        return Ok(Action::OpenUrl(url));
+    }
+    if let Some(command) = command {
+        require_nonempty("command", &command)?;
+        return Ok(Action::RunCommand(command));
+    }
+    let keys = keys.expect("exactly one atomic action was present");
+    let chord: Chord = keys.parse().context("invalid `keys` action")?;
+    if chord.has(Modifier::Hyper) {
+        bail!("a `keys` action cannot emit the virtual `hyper` modifier");
+    }
+    Ok(Action::SendKeys(chord))
 }
 
 fn enabled_by_default() -> bool {

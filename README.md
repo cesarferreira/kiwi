@@ -113,6 +113,13 @@ cheatsheet = true
 # Emit another keyboard shortcut.
 "hyper+a" = { keys = "control+a" }
 
+# Run actions in order. This opens YouTube and focuses its search field.
+"hyper+y" = { sequence = [
+  { url = "https://www.youtube.com" },
+  { wait_ms = 300 },
+  { keys = "slash" },
+] }
+
 # Side-specific modifiers work outside the Hyper layer.
 "left_option+h" = { keys = "left" }
 
@@ -122,6 +129,23 @@ cheatsheet = true
 
 Run `kiwi validate` after editing. Unknown fields, invalid names, duplicate
 normalized chords, and bindings with more or fewer than one action are rejected.
+
+### Sequences
+
+Use `sequence` when a shortcut needs more than one action. Each step must be
+exactly one of `app`, `url`, `command`, `keys`, or `wait_ms`; sequences cannot
+be nested. `wait_ms` accepts `0` through `5000` and pauses before the following
+step. Execution stops if a step fails.
+
+For example, this opens YouTube and uses its `/` shortcut to focus search:
+
+```toml
+"hyper+y" = { sequence = [
+  { url = "https://www.youtube.com" },
+  { wait_ms = 300 },
+  { keys = "slash" },
+] }
+```
 
 <a id="configuration"></a>
 ## Configuration
