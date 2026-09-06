@@ -388,7 +388,7 @@ fn install(config_path: &Path) -> Result<()> {
         fs::create_dir_all(parent)?;
     }
     let binary = std::env::current_exe().context("could not locate the kiwi binary")?;
-    let signature_changed = ensure_stable_signature(&binary)?;
+    let signature = ensure_signature(&binary)?;
     fs::write(
         &plist_path,
         launch_agent_plist(&binary, config_path, &log_path),
@@ -402,7 +402,7 @@ fn install(config_path: &Path) -> Result<()> {
         &plist_path.to_string_lossy(),
     ])?;
     println!("installed {LABEL}");
-    if signature_changed || !accessibility_is_trusted() {
+    if signature.needs_accessibility_refresh() || !accessibility_is_trusted() {
         println!(
             "next: run `kiwi permissions`, remove any old Kiwi entry, add {}, then run `kiwi restart`",
             binary.display()
@@ -455,11 +455,13 @@ fn doctor(config_path: &Path) -> Result<()> {
         }
     }
     let binary = std::env::current_exe().context("could not locate the kiwi binary")?;
-    if is_stable_requirement(&code_requirement(&binary)?) {
-        println!("[ok] stable code-signing identity");
-    } else {
-        healthy = false;
-        println!("[fail] binary is ad-hoc signed; run `kiwi install`");
+    match signature_state(&binary)? {
+        SignatureState::Stable { changed: _ } => println!("[ok] stable code-signing identity"),
+        SignatureState::AdHoc { changed: _ } => {
+            println!(
+                "[warn] binary is ad-hoc signed; Accessibility permission may need to be re-added after reinstall"
+            );
+        }
     }
     match query_launch_agent_state()? {
         LaunchAgentState::Running { .. } => println!("[ok] LaunchAgent is running"),
@@ -665,9 +667,30 @@ fn launchctl(arguments: &[&str]) -> Result<()> {
     Ok(())
 }
 
-fn ensure_stable_signature(binary: &Path) -> Result<bool> {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SignatureState {
+    Stable { changed: bool },
+    AdHoc { changed: bool },
+}
+
+impl SignatureState {
+    fn needs_accessibility_refresh(self) -> bool {
+        match self {
+            SignatureState::Stable { changed } | SignatureState::AdHoc { changed } => changed,
+        }
+    }
+}
+
+fn signature_state(binary: &Path) -> Result<SignatureState> {
     if is_stable_requirement(&code_requirement(binary)?) {
-        return Ok(false);
+        return Ok(SignatureState::Stable { changed: false });
+    }
+    Ok(SignatureState::AdHoc { changed: false })
+}
+
+fn ensure_signature(binary: &Path) -> Result<SignatureState> {
+    if is_stable_requirement(&code_requirement(binary)?) {
+        return Ok(SignatureState::Stable { changed: false });
     }
     let output = ProcessCommand::new("/usr/bin/security")
         .args(["find-identity", "-p", "codesigning", "-v"])
@@ -679,14 +702,29 @@ fn ensure_stable_signature(binary: &Path) -> Result<bool> {
             String::from_utf8_lossy(&output.stderr).trim()
         );
     }
-    let identity = select_signing_identity(&String::from_utf8_lossy(&output.stdout)).context(
-        "no Apple code-signing identity is available; install an Apple Development or Developer ID certificate",
-    )?;
+    if let Some(identity) = select_signing_identity(&String::from_utf8_lossy(&output.stdout)) {
+        sign_binary(binary, &identity)?;
+        if !is_stable_requirement(&code_requirement(binary)?) {
+            bail!("codesign did not produce a stable designated requirement");
+        }
+        println!("signed kiwi as `{identity}`");
+        return Ok(SignatureState::Stable { changed: true });
+    }
+
+    sign_binary(binary, "-")?;
+    println!(
+        "warning: no Apple code-signing identity is available; signed kiwi ad-hoc. \
+Accessibility permission may need to be re-added after each reinstall."
+    );
+    Ok(SignatureState::AdHoc { changed: true })
+}
+
+fn sign_binary(binary: &Path, identity: &str) -> Result<()> {
     let output = ProcessCommand::new("/usr/bin/codesign")
         .args([
             "--force",
             "--sign",
-            &identity,
+            identity,
             "--identifier",
             LABEL,
             &binary.to_string_lossy(),
@@ -699,11 +737,7 @@ fn ensure_stable_signature(binary: &Path) -> Result<bool> {
             String::from_utf8_lossy(&output.stderr).trim()
         );
     }
-    if !is_stable_requirement(&code_requirement(binary)?) {
-        bail!("codesign did not produce a stable designated requirement");
-    }
-    println!("signed kiwi as `{identity}`");
-    Ok(true)
+    Ok(())
 }
 
 fn code_requirement(binary: &Path) -> Result<String> {
@@ -1000,6 +1034,15 @@ mod tests {
             super::select_signing_identity(identities).as_deref(),
             Some("Developer ID Application: Example Person (TEAMID)")
         );
+    }
+
+    #[test]
+    fn returns_no_identity_when_security_lists_no_apple_code_signing_certificate() {
+        let identities = r#"
+             0 valid identities found
+        "#;
+
+        assert_eq!(super::select_signing_identity(identities), None);
     }
 
     #[test]

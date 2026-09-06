@@ -50,9 +50,10 @@ kiwi install
 ```
 
 Homebrew and GitHub releases ship an unsigned binary. `kiwi install` signs
-that copy with **your** Apple identity, creates the LaunchAgent, and starts
-it. Run it again after each `brew upgrade kiwi`, because the new binary needs
-to be signed and the LaunchAgent needs to point at its new path.
+that copy, creates the LaunchAgent, and starts it. It prefers **your** Apple
+identity and falls back to an ad-hoc signature when none is available. Run it
+again after each `brew upgrade kiwi`, because the new binary needs to be signed
+and the LaunchAgent needs to point at its new path.
 
 A paid Apple Developer Program membership is not required. A free **Apple
 Development** certificate is enough — add your Apple ID in Xcode
@@ -67,6 +68,9 @@ identity. Check that macOS can see one:
 ```sh
 security find-identity -p codesigning -v
 ```
+
+With the ad-hoc fallback, Kiwi can still be installed, but macOS may require
+you to remove and re-add the Accessibility entry after each reinstall.
 
 <a id="quickstart"></a>
 ## Quickstart
@@ -360,8 +364,9 @@ check `hidutil property --get UserKeyMapping` for a Caps Lock → F18 mapping. I
 `doctor` reports an Accessibility problem, remove any stale `kiwi` entry, add the
 binary again, enable it, and restart.
 
-**`doctor` says the binary is ad-hoc signed.** Run `kiwi install` again. Avoid
-finishing an update with only `cargo install`; it replaces the stable signature.
+**`doctor` warns that the binary is ad-hoc signed.** Kiwi can run this way, but
+macOS may lose the Accessibility grant after reinstalling. Add an Apple
+Development or Developer ID certificate if you want a stable signing identity.
 
 **A command works in Terminal but not from a binding.** The LaunchAgent has a
 minimal `PATH`. Use an absolute path, or set `PATH` inside the command.
