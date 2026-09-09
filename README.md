@@ -45,15 +45,26 @@ keyboard shortcuts.
 ## Install
 
 ```sh
+# Homebrew
 brew install cesarferreira/tap/kiwi
+
+# Or cargo-binstall
+cargo binstall kiwi-keymapper
+
+# Required after either installation method
 kiwi install
 ```
 
-Homebrew and GitHub releases ship an unsigned binary. `kiwi install` signs
-that copy, creates the LaunchAgent, and starts it. It prefers **your** Apple
-identity and falls back to an ad-hoc signature when none is available. Run it
-again after each `brew upgrade kiwi`, because the new binary needs to be signed
-and the LaunchAgent needs to point at its new path.
+Homebrew, cargo-binstall, and GitHub releases ship an unsigned binary. `kiwi
+install` signs the installed copy locally, creates the LaunchAgent, and starts
+it. It prefers **your** Apple identity and falls back to an ad-hoc signature
+when none is available. Run it again after every upgrade or reinstall, because
+the new binary needs to be signed and the LaunchAgent needs to point at its new
+path.
+
+This local signature keeps macOS Accessibility permissions more stable; it is
+not Apple notarization and does not make Kiwi a Developer ID-signed
+distribution.
 
 A paid Apple Developer Program membership is not required. A free **Apple
 Development** certificate is enough — add your Apple ID in Xcode
