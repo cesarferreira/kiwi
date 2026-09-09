@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.2] - 2026-09-09
+
+### 💼 Other
+
+- Add sequential shortcut actions
+- Allow ad-hoc signing during install
+- Updated screenshot
 ## [0.4.1] - 2026-09-03
 
 ### 💼 Other
