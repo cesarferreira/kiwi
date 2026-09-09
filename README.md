@@ -66,6 +66,19 @@ This local signature keeps macOS Accessibility permissions more stable; it is
 not Apple notarization and does not make Kiwi a Developer ID-signed
 distribution.
 
+An ad-hoc signature is valid for running Kiwi, but it does not identify the
+developer and Gatekeeper does not treat it as a trusted distribution
+signature. If macOS blocks the downloaded binary before `kiwi install` can
+sign it locally, remove the quarantine attribute and try again:
+
+```sh
+xattr -d com.apple.quarantine "$(command -v kiwi)"
+kiwi install
+```
+
+Only remove quarantine after confirming that `command -v kiwi` points to the
+Kiwi binary you intended to install.
+
 A paid Apple Developer Program membership is not required. A free **Apple
 Development** certificate is enough — add your Apple ID in Xcode
 (**Settings → Accounts**) and create an Apple Development certificate if
@@ -80,8 +93,10 @@ identity. Check that macOS can see one:
 security find-identity -p codesigning -v
 ```
 
-With the ad-hoc fallback, Kiwi can still be installed, but macOS may require
-you to remove and re-add the Accessibility entry after each reinstall.
+With the ad-hoc fallback, Kiwi can still run normally. However, its identity is
+based on the binary's hash, which changes between releases, so macOS may
+require you to remove and re-add the Accessibility entry after each upgrade or
+reinstall.
 
 <a id="quickstart"></a>
 ## Quickstart
