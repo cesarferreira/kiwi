@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.3] - 2026-09-09
+
+### 💼 Other
+
+- Updated readme
+- Updated readme
 ## [0.4.2] - 2026-09-09
 
 ### 💼 Other
