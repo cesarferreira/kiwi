@@ -305,10 +305,23 @@ fn mapping_state(output: &str) -> MappingState {
     if output.is_empty() || output == "(null)" || compact == "()" {
         return MappingState::Empty;
     }
-    let one_mapping = output.matches("HIDKeyboardModifierMappingSrc").count() == 1;
-    let our_source = output.contains("30064771129") || output.contains("0x700000039");
-    let our_destination = output.contains("30064771181") || output.contains("0x70000006D");
-    if one_mapping && our_source && our_destination {
+    if output.contains("UserKeyMapping")
+        && output
+            .lines()
+            .filter(|line| line.contains("UserKeyMapping"))
+            .all(|line| line.contains("(null)"))
+    {
+        return MappingState::Empty;
+    }
+    let mapping_count = output.matches("HIDKeyboardModifierMappingSrc").count();
+    let our_source_count =
+        output.matches("30064771129").count() + output.matches("0x700000039").count();
+    let our_destination_count =
+        output.matches("30064771181").count() + output.matches("0x70000006D").count();
+    if mapping_count > 0
+        && mapping_count == our_source_count
+        && mapping_count == our_destination_count
+    {
         MappingState::Owned
     } else {
         MappingState::Foreign
@@ -453,12 +466,38 @@ mod tests {
         assert_eq!(mapping_state("(\n)"), MappingState::Empty);
         assert_eq!(
             mapping_state(
+                r#"RegistryID  Key                   Value
+1000009cc   UserKeyMapping   (null)
+100000a5c   UserKeyMapping   (null)"#
+            ),
+            MappingState::Empty
+        );
+        assert_eq!(
+            mapping_state(
                 r#"(
                   {
                     HIDKeyboardModifierMappingDst = 30064771181;
                     HIDKeyboardModifierMappingSrc = 30064771129;
                   }
                 )"#
+            ),
+            MappingState::Owned
+        );
+        assert_eq!(
+            mapping_state(
+                r#"RegistryID  Key                   Value
+1000009cc   UserKeyMapping   (
+        {
+        HIDKeyboardModifierMappingDst = 30064771181;
+        HIDKeyboardModifierMappingSrc = 30064771129;
+    }
+)
+100000a5c   UserKeyMapping   (
+        {
+        HIDKeyboardModifierMappingDst = 30064771181;
+        HIDKeyboardModifierMappingSrc = 30064771129;
+    }
+)"#
             ),
             MappingState::Owned
         );
