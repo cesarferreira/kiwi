@@ -9,6 +9,7 @@ mod keycodes;
 mod launchd;
 mod listener;
 mod runtime;
+mod windows;
 
 pub use cheatsheet::run_overlay_helper;
 pub use daemon::{accessibility_is_trusted, remove_caps_remap, run_event_tap};

@@ -30,6 +30,8 @@ pub(crate) struct HandledEvent {
     pub action_job: Option<ActionJob>,
     pub hyper_layer: Option<HyperLayerTransition>,
     pub notices: Vec<ReloadNotice>,
+    pub cycle_reset: bool,
+    pub hyper_active: bool,
 }
 
 fn job_chord(action: &Action, triggering: Option<Chord>, pressed: Option<Key>) -> Option<Chord> {
@@ -76,12 +78,16 @@ impl ReloadingEngine {
 
         let preview_chord = self.engine.preview_chord(&input);
         let hyper_layer = self.hyper_transition(&input);
-        let chord = preview.then(|| preview_chord.clone()).flatten();
+
         let pressed_key = match &input {
             Input::Key { key, .. } => Some(key.clone()),
-            Input::Modifier { .. } => None,
+            Input::Modifier { .. } | Input::Scroll(_) => None,
         };
+        let was_hyper = self.engine.hyper_active();
         let decision = self.engine.handle(input);
+        let cycle_reset = was_hyper && !self.engine.hyper_active();
+        let preview_chord = self.engine.last_gesture().or(preview_chord);
+        let chord = preview.then(|| preview_chord.clone()).flatten();
         let action_job = match &decision {
             Decision::Trigger(action) => {
                 job_chord(action, preview_chord, pressed_key).map(|chord| ActionJob {
@@ -100,6 +106,8 @@ impl ReloadingEngine {
             action_job,
             hyper_layer,
             notices,
+            cycle_reset,
+            hyper_active: self.engine.hyper_active(),
         }
     }
 
@@ -186,6 +194,43 @@ mod tests {
             kind: EventKind::Up,
             repeat: false,
         }
+    }
+
+    #[test]
+    fn gesture_jobs_retain_binding_context_and_release_resets_even_without_cheatsheet() {
+        use crate::{
+            config::WindowDirection,
+            gestures::{Scroll, ScrollPhase},
+        };
+        let initial = config(
+            r#"[ui]
+cheatsheet = false
+feedback = "all"
+[bindings]
+"hyper+swipe_right" = { window = "next" }
+"#,
+        );
+        let (_sender, receiver) = mpsc::channel();
+        let mut runtime = ReloadingEngine::new(initial, receiver);
+        runtime.handle(press("caps_lock"));
+        let handled = runtime.observe(Input::Scroll(Scroll {
+            x: 40,
+            y: 0,
+            phase: ScrollPhase::Began,
+            momentum: false,
+            continuous: true,
+        }));
+        let job = handled.action_job.unwrap();
+        assert_eq!(job.chord.to_string(), "hyper+swipe_right");
+        assert_eq!(job.action, Action::Window(WindowDirection::Next));
+        assert_eq!(job.feedback, FeedbackPolicy::All);
+        assert_eq!(handled.chord.unwrap().to_string(), "hyper+swipe_right");
+        assert!(handled.hyper_active);
+        assert!(!handled.cycle_reset);
+        let released = runtime.handle(release("caps_lock"));
+        assert!(released.cycle_reset);
+        assert!(!released.hyper_active);
+        assert!(released.action_job.is_none());
     }
 
     #[test]

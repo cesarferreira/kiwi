@@ -36,7 +36,8 @@ keyboard shortcuts.
 - One declarative TOML configuration
 - Global shortcuts available in every application
 - Caps Lock → Hyper/Escape dual-role key
-- App, URL, command, and key-sequence actions
+- App, URL, command, key-sequence, and window-cycling actions
+- Optional Hyper + two-finger trackpad swipe bindings
 - Generic and side-specific modifiers
 - Automatic config reloads, including symlinked dotfiles
 - No Karabiner-Elements or Raycast dependency
@@ -163,7 +164,7 @@ normalized chords, and bindings with more or fewer than one action are rejected.
 ### Sequences
 
 Use `sequence` when a shortcut needs more than one action. Each step must be
-exactly one of `app`, `url`, `command`, `keys`, or `wait_ms`; sequences cannot
+exactly one of `app`, `url`, `command`, `keys`, `window`, or `wait_ms`; sequences cannot
 be nested. `wait_ms` accepts `0` through `5000` and pauses before the following
 step. Execution stops if a step fails.
 
@@ -218,7 +219,64 @@ valid with the cheatsheet off.
 ### `[bindings]`
 
 Each entry maps a chord to an inline table with exactly one of `app`, `url`,
-`command`, or `keys`. `enabled` is optional and defaults to `true`.
+`command`, `keys`, `window`, or `sequence`. `enabled` is optional and defaults to `true`.
+
+#### Trackpad gestures and `window`
+
+Add these opt-in entries inside your existing `[bindings]` table:
+
+```toml
+"hyper+swipe_right" = { window = "next" }
+"hyper+swipe_left" = { window = "previous" }
+# Optional keyboard equivalents, sharing the same cycling session:
+"hyper+tab" = { window = "next" }
+"hyper+shift+tab" = { window = "previous" }
+```
+
+Hold Hyper before starting a two-finger horizontal swipe. Finger motion to the
+right selects the next window; left selects the previous, independently of the
+macOS **Natural scrolling** setting. A swipe must travel at least 30 scroll
+points horizontally and dominate vertical motion by more than 2:1. Each swipe
+fires once; momentum never fires another action. Ordinary scrolling without
+Hyper, vertical gestures, unbound directions, and phase-less mouse wheels pass
+through. A captured horizontal gesture and its momentum are consumed, including
+its tail after releasing Hyper. Using a gesture prevents the Hyper tap action.
+
+`window = "next"` / `"previous"` cycles individual on-screen windows on the
+focused window's display (the pointer's display if no window is focused),
+including multiple windows from one app. A window belongs to the display
+containing its center. Hidden/minimized windows, other Spaces, desktop elements,
+and windows above or below the normal window layer are excluded. Windows are
+activated and raised without changing their position or size.
+
+The initial front-to-back order and display stay fixed while Hyper is held, so
+raising windows cannot make repeated swipes bounce between two candidates.
+Cycling wraps at either end, skips windows that close or become unavailable,
+and includes newly opened windows on the next Hyper hold. Window actions bound
+outside Hyper start a fresh cycle each time. Gesture chords must include `hyper`;
+extra modifiers work as with keyboard bindings. Gestures can use any existing
+action, but cannot be emitted by `keys` or used as the physical Hyper key/tap.
+
+Run `kiwi validate`, then `kiwi restart` after upgrading the binary. These bindings
+appear in `kiwi list` and the Hyper cheatsheet. `kiwi listen` observes recognized
+gestures without executing actions; when using Caps Lock, the daemon must already
+have installed its Caps Lock → F18 mapping, as for listening to keyboard chords.
+
+Accessibility permission is required for the kiwi executable; native `window`
+actions do not need the System Events Automation grant used by `app` behaviors.
+No window screenshots or titles are read. Candidate identity uses macOS's private
+`_AXUIElementGetWindow` bridge, resolved at runtime; if a future macOS removes it,
+window cycling reports an error. Apps that do not expose accessible window handles
+are skipped. Quartz exposes phased continuous scrolling rather than finger count,
+so other pointing devices that emit the same phased events may also match. macOS
+or third-party tools can reserve gestures before kiwi receives them.
+
+To check on hardware: hold Hyper and swipe repeatedly in both directions with
+three windows (including two from one app), then release/rehold Hyper; verify
+wraparound, stable order, and unchanged window bounds. Repeat on a second display,
+with Natural scrolling both on and off, after closing a candidate, and with a
+minimized window or a window on another Space. Confirm ordinary scrolling and
+momentum never switch windows.
 
 #### `app`
 

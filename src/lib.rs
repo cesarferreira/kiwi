@@ -1,7 +1,9 @@
 pub mod config;
 pub mod conflicts;
 pub mod engine;
+pub mod gestures;
 pub mod key;
+pub mod window_cycle;
 
 pub const DEFAULT_CONFIG: &str = r#"# kiwi configuration
 # Chords use `+`; accepted aliases include cmd, ctrl, alt, and esc.
@@ -27,6 +29,10 @@ cheatsheet_delay_ms = 1000
 "left_option+j" = { keys = "down", enabled = false }
 "left_option+k" = { keys = "up", enabled = false }
 "left_option+l" = { keys = "right", enabled = false }
+
+# Optional two-finger trackpad window cycling (hold Hyper while swiping).
+# "hyper+swipe_right" = { window = "next" }
+# "hyper+swipe_left" = { window = "previous" }
 
 # Other supported actions:
 # "hyper+b" = { url = "https://example.com" }
