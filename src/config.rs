@@ -31,6 +31,24 @@ pub enum Action {
     SendKeys(Chord),
     Sequence(Vec<Action>),
     Wait(Duration),
+    Window(WindowDirection),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WindowDirection {
+    Next,
+    Previous,
+}
+
+impl FromStr for WindowDirection {
+    type Err = anyhow::Error;
+    fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "next" => Ok(Self::Next),
+            "previous" => Ok(Self::Previous),
+            other => bail!("unknown window action `{other}`; expected `next` or `previous`"),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -105,6 +123,14 @@ impl FromStr for AppBehavior {
 impl Action {
     pub fn type_and_value(&self) -> (&'static str, String) {
         match self {
+            Self::Window(direction) => (
+                "window",
+                match direction {
+                    WindowDirection::Next => "next",
+                    WindowDirection::Previous => "previous",
+                }
+                .into(),
+            ),
             Self::App(action) => ("app", action.display_value()),
             Self::OpenUrl(value) => ("url", value.clone()),
             Self::RunCommand(value) => ("command", value.clone()),
@@ -174,6 +200,9 @@ impl Config {
             }
             let chord = Chord::from_str(&source)
                 .map_err(|error| anyhow::anyhow!("invalid binding `{source}`: {error:#}"))?;
+            if chord.key.is_gesture() && !chord.has(Modifier::Hyper) {
+                bail!("gesture binding `{source}` must include `hyper`");
+            }
             let normalized = chord.to_string();
             if bindings.contains_key(&normalized) {
                 bail!("duplicate binding `{normalized}` after normalization");
@@ -305,8 +334,11 @@ impl Default for HyperSpec {
 
 impl HyperSpec {
     fn compile(self) -> Result<Hyper> {
-        let key = self.key.parse().context("invalid hyper key")?;
-        let tap = self.tap.parse().context("invalid hyper tap action")?;
+        let key: Key = self.key.parse().context("invalid hyper key")?;
+        let tap: Chord = self.tap.parse().context("invalid hyper tap action")?;
+        if key.is_gesture() || tap.key.is_gesture() {
+            bail!("hyper key and tap must be keyboard keys");
+        }
         let modifiers = self
             .modifiers
             .iter()
@@ -334,6 +366,7 @@ pub struct Hyper {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BindingSpec {
+    pub window: Option<String>,
     pub app: Option<String>,
     pub behavior: Option<String>,
     pub url: Option<String>,
@@ -347,6 +380,7 @@ pub struct BindingSpec {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SequenceStepSpec {
+    pub window: Option<String>,
     pub app: Option<String>,
     pub behavior: Option<String>,
     pub url: Option<String>,
@@ -358,6 +392,7 @@ pub struct SequenceStepSpec {
 impl BindingSpec {
     fn compile(self) -> Result<Action> {
         let count = [
+            self.window.is_some(),
             self.app.is_some(),
             self.url.is_some(),
             self.command.is_some(),
@@ -369,7 +404,7 @@ impl BindingSpec {
         .count();
         if count != 1 {
             bail!(
-                "a binding must define exactly one of `app`, `url`, `command`, `keys`, or `sequence`"
+                "a binding must define exactly one of `app`, `url`, `command`, `keys`, `window`, or `sequence`"
             );
         }
 
@@ -388,13 +423,21 @@ impl BindingSpec {
                 .map(Action::Sequence);
         }
 
-        compile_atomic_action(self.app, self.behavior, self.url, self.command, self.keys)
+        compile_atomic_action(
+            self.app,
+            self.behavior,
+            self.url,
+            self.command,
+            self.keys,
+            self.window,
+        )
     }
 }
 
 impl SequenceStepSpec {
     fn compile(self) -> Result<Action> {
         let count = [
+            self.window.is_some(),
             self.app.is_some(),
             self.url.is_some(),
             self.command.is_some(),
@@ -406,7 +449,7 @@ impl SequenceStepSpec {
         .count();
         if count != 1 {
             bail!(
-                "a sequence step must define exactly one of `app`, `url`, `command`, `keys`, or `wait_ms`"
+                "a sequence step must define exactly one of `app`, `url`, `command`, `keys`, `window`, or `wait_ms`"
             );
         }
         if let Some(wait_ms) = self.wait_ms {
@@ -418,7 +461,14 @@ impl SequenceStepSpec {
             }
             return Ok(Action::Wait(Duration::from_millis(wait_ms)));
         }
-        compile_atomic_action(self.app, self.behavior, self.url, self.command, self.keys)
+        compile_atomic_action(
+            self.app,
+            self.behavior,
+            self.url,
+            self.command,
+            self.keys,
+            self.window,
+        )
     }
 }
 
@@ -428,9 +478,13 @@ fn compile_atomic_action(
     url: Option<String>,
     command: Option<String>,
     keys: Option<String>,
+    window: Option<String>,
 ) -> Result<Action> {
     if behavior.is_some() && app.is_none() {
         bail!("`behavior` is only valid with `app`");
+    }
+    if let Some(window) = window {
+        return Ok(Action::Window(window.parse()?));
     }
     if let Some(app) = app {
         require_nonempty("app", &app)?;
@@ -453,6 +507,9 @@ fn compile_atomic_action(
     }
     let keys = keys.expect("exactly one atomic action was present");
     let chord: Chord = keys.parse().context("invalid `keys` action")?;
+    if chord.key.is_gesture() {
+        bail!("a `keys` action cannot emit a gesture");
+    }
     if chord.has(Modifier::Hyper) {
         bail!("a `keys` action cannot emit the virtual `hyper` modifier");
     }

@@ -70,6 +70,7 @@ pub fn listen_event_tap(
             CGEventType::KeyDown,
             CGEventType::KeyUp,
             CGEventType::FlagsChanged,
+            CGEventType::ScrollWheel,
         ],
         move |_proxy, event_type, event| {
             if matches!(

@@ -2,6 +2,7 @@ use std::{collections::BTreeSet, sync::Arc};
 
 use crate::{
     config::{Action, BindingSummary, CompiledConfig, FeedbackPolicy},
+    gestures::{GestureBindings, Scroll, SwipeRecognizer},
     key::{Chord, Key, Modifier},
 };
 
@@ -13,6 +14,7 @@ pub enum EventKind {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Input {
+    Scroll(Scroll),
     Key {
         key: Key,
         kind: EventKind,
@@ -39,6 +41,8 @@ pub struct Engine {
     hyper_used: bool,
     consumed_keys: BTreeSet<Key>,
     rewritten_keys: BTreeSet<Key>,
+    swipe: SwipeRecognizer,
+    last_gesture: Option<Chord>,
 }
 
 impl Engine {
@@ -50,11 +54,15 @@ impl Engine {
             hyper_used: false,
             consumed_keys: BTreeSet::new(),
             rewritten_keys: BTreeSet::new(),
+            swipe: SwipeRecognizer::default(),
+            last_gesture: None,
         }
     }
 
     pub fn handle(&mut self, input: Input) -> Decision {
+        self.last_gesture = None;
         match input {
+            Input::Scroll(scroll) => self.handle_scroll(scroll),
             Input::Modifier { modifier, kind } => {
                 match kind {
                     EventKind::Down => {
@@ -70,6 +78,56 @@ impl Engine {
                 Decision::Pass
             }
             Input::Key { key, kind, repeat } => self.handle_key(key, kind, repeat),
+        }
+    }
+
+    pub fn last_gesture(&self) -> Option<Chord> {
+        self.last_gesture.clone()
+    }
+
+    pub fn hyper_active(&self) -> bool {
+        self.hyper_active
+    }
+
+    fn gesture_chord(&self, name: &str) -> Chord {
+        let mut modifiers: Vec<_> = self.held_modifiers.iter().copied().collect();
+        modifiers.push(Modifier::Hyper);
+        Chord::new(modifiers, name.parse().expect("known gesture"))
+    }
+
+    fn handle_scroll(&mut self, scroll: Scroll) -> Decision {
+        let bindings = GestureBindings {
+            left: self
+                .config
+                .action_for(&self.gesture_chord("swipe_left"))
+                .is_some(),
+            right: self
+                .config
+                .action_for(&self.gesture_chord("swipe_right"))
+                .is_some(),
+            up: self
+                .config
+                .action_for(&self.gesture_chord("swipe_up"))
+                .is_some(),
+            down: self
+                .config
+                .action_for(&self.gesture_chord("swipe_down"))
+                .is_some(),
+        };
+        let outcome = self.swipe.handle(scroll, self.hyper_active, bindings);
+        if let Some(name) = outcome.gesture {
+            self.hyper_used = true;
+            let chord = self.gesture_chord(name);
+            self.last_gesture = Some(chord.clone());
+            if let Some(action) = self.config.action_for(&chord) {
+                return Decision::Trigger(action.clone());
+            }
+        }
+        if outcome.suppress {
+            self.hyper_used = true;
+            Decision::Suppress
+        } else {
+            Decision::Pass
         }
     }
 
@@ -161,6 +219,7 @@ impl Engine {
                 Decision::Suppress
             }
             EventKind::Up => {
+                self.swipe.release_hyper();
                 self.hyper_active = false;
                 if self.hyper_used {
                     Decision::Suppress

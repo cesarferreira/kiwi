@@ -38,6 +38,7 @@ use super::{
     feedback::{ActionJob, MacOsNotifier, Notification, Notifier, action_completion},
     key_to_keycode,
     runtime::{HyperLayerTransition, ReloadNotice, ReloadingEngine},
+    windows::WindowController,
 };
 
 const CAPS_TO_F18_MAPPING: &str = r#"{"UserKeyMapping":[{"HIDKeyboardModifierMappingSrc":0x700000039,"HIDKeyboardModifierMappingDst":0x70000006D}]}"#;
@@ -101,6 +102,7 @@ pub fn run_event_tap(config_path: &Path, config: CompiledConfig) -> Result<()> {
             CGEventType::KeyDown,
             CGEventType::KeyUp,
             CGEventType::FlagsChanged,
+            CGEventType::ScrollWheel,
         ],
         move |_proxy, event_type, event| {
             if matches!(
@@ -128,6 +130,9 @@ pub fn run_event_tap(config_path: &Path, config: CompiledConfig) -> Result<()> {
                 Err(_) => return CallbackResult::Keep,
             };
             report_reload_notices(&callback_config_path, &handled.notices);
+            if handled.cycle_reset {
+                let _ = action_sender.send(WorkerMessage::ResetWindows);
+            }
             if let Some(transition) = handled.hyper_layer {
                 let command = match transition {
                     HyperLayerTransition::Show {
@@ -150,6 +155,7 @@ pub fn run_event_tap(config_path: &Path, config: CompiledConfig) -> Result<()> {
                 event,
                 &action_sender,
                 remap_caps,
+                handled.hyper_active,
             )
         },
     )
@@ -196,8 +202,9 @@ fn apply_decision(
     decision: Decision,
     action_job: Option<ActionJob>,
     event: &CGEvent,
-    actions: &mpsc::Sender<ActionJob>,
+    actions: &mpsc::Sender<WorkerMessage>,
     strip_caps_flag: bool,
+    hyper_active: bool,
 ) -> CallbackResult {
     match decision {
         Decision::Pass => {
@@ -221,7 +228,7 @@ fn apply_decision(
                 eprintln!("kiwi action dispatch failed: action job was not created");
                 return CallbackResult::Drop;
             };
-            if let Err(error) = actions.send(action_job) {
+            if let Err(error) = actions.send(WorkerMessage::Action(action_job, hyper_active)) {
                 eprintln!("kiwi action worker stopped: {error}");
             }
             CallbackResult::Drop
@@ -328,10 +335,33 @@ fn mapping_state(output: &str) -> MappingState {
     }
 }
 
-fn action_worker(receiver: mpsc::Receiver<ActionJob>, notifications: mpsc::Sender<Notification>) {
+enum WorkerMessage {
+    Action(ActionJob, bool),
+    ResetWindows,
+}
+
+fn action_worker(
+    receiver: mpsc::Receiver<WorkerMessage>,
+    notifications: mpsc::Sender<Notification>,
+) {
     let app_controller = MacOsAppController;
-    for job in receiver {
-        let outcome = execute_action(&job.action, &app_controller);
+    let mut windows = WindowController::default();
+    for message in receiver {
+        let job = match message {
+            WorkerMessage::Action(job, hyper_active) => {
+                if !hyper_active {
+                    windows.reset();
+                }
+                job
+            }
+            WorkerMessage::ResetWindows => {
+                windows.reset();
+                continue;
+            }
+        };
+        let outcome = objc2::rc::autoreleasepool(|_| {
+            execute_action(&job.action, &app_controller, &mut windows)
+        });
         let completion = action_completion(&job, outcome);
         if let Some(error) = completion.failure {
             eprintln!("kiwi action failed: {error}");
@@ -352,15 +382,20 @@ fn notification_worker(receiver: mpsc::Receiver<Notification>, notifier: impl No
     }
 }
 
-fn execute_action(action: &Action, app_controller: &impl AppController) -> Result<()> {
+fn execute_action(
+    action: &Action,
+    app_controller: &impl AppController,
+    windows: &mut WindowController,
+) -> Result<()> {
     match action {
+        Action::Window(direction) => windows.cycle(*direction),
         Action::App(action) => app_controller.execute(action),
         Action::OpenUrl(url) => run_process(Command::new("/usr/bin/open").arg(url)),
         Action::RunCommand(command) => run_process(Command::new("/bin/zsh").args(["-lc", command])),
         Action::SendKeys(chord) => post_chord(chord),
         Action::Sequence(steps) => {
             for step in steps {
-                execute_action(step, app_controller)?;
+                execute_action(step, app_controller, windows)?;
             }
             Ok(())
         }
