@@ -35,6 +35,9 @@ objc2 = "0.6.4"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSWorkspace", "NSEvent", "objc2-core-graphics", "libc", "NSApplication", "NSColor", "NSControl", "NSFont", "NSFontDescriptor", "NSGraphics", "NSPanel", "NSParagraphStyle", "NSResponder", "NSRunningApplication", "NSScreen", "NSTextField", "NSView", "NSWindow", "objc2-core-foundation"] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSGeometry", "NSString"] }
 
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+core-graphics = { version = "0.25.0", features = ["highsierra"] }
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

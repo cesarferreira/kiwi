@@ -128,6 +128,7 @@ impl WindowController {
         let focused_window_attribute = CFString::new("AXFocusedWindow");
         let application = application(window.pid);
         let raised = CFString::new("AXRaise");
+        let frontmost = CFString::new("AXFrontmost");
         // SAFETY: Retained AX handles and CF strings/booleans live through calls.
         let raise_status = unsafe {
             AXUIElementSetAttributeValue(
@@ -147,7 +148,17 @@ impl WindowController {
                 focused_window_attribute.as_CFTypeRef(),
                 window.element.as_CFTypeRef(),
             );
-            AXUIElementPerformAction(window.element.as_CFTypeRef(), raised.as_CFTypeRef())
+            let status =
+                AXUIElementPerformAction(window.element.as_CFTypeRef(), raised.as_CFTypeRef());
+            // AppKit activation is cooperative and can leave a background
+            // daemon's target inactive even after AXRaise succeeds. Explicitly
+            // transfer foreground focus via Accessibility, as app cycling does.
+            AXUIElementSetAttributeValue(
+                application.as_CFTypeRef(),
+                frontmost.as_CFTypeRef(),
+                CFBoolean::true_value().as_CFTypeRef(),
+            );
+            status
         };
         // A messaging timeout does not prove the operation had no effect. Verify
         // the actual focused handle before reporting any AXRaise failure.
@@ -447,6 +458,92 @@ mod tests {
                 before, after,
                 "cycling must preserve window position and size"
             );
+        });
+    }
+    #[test]
+    #[ignore = "drives the installed daemon; requires Caps Lock Hyper, both swipe bindings and Accessibility permission"]
+    fn live_daemon_swipes_cycle_in_both_directions() {
+        use core_graphics::event::{CGEventTapLocation, EventField, KeyCode};
+        assert!(super::super::accessibility_is_trusted());
+        objc2::rc::autoreleasepool(|_| {
+            let original = focused_window().expect("a window must be focused");
+            let _restore = RestoreFocus(original.clone());
+            let rect = bounds(&original).unwrap();
+            let center = CGPoint::new(
+                rect.origin.x + rect.size.width / 2.0,
+                rect.origin.y + rect.size.height / 2.0,
+            );
+            let display = CGDisplay::active_displays()
+                .unwrap()
+                .into_iter()
+                .map(|id| CGDisplay::new(id).bounds())
+                .find(|r| contains(*r, center))
+                .unwrap();
+            let visible = visible_windows(display).unwrap();
+            assert!(visible.len() >= 2);
+            let index = visible.iter().position(|w| w.element == original).unwrap();
+            let source = CGEventSource::new(CGEventSourceStateID::CombinedSessionState).unwrap();
+            struct ReleaseHyper(CGEvent);
+            impl Drop for ReleaseHyper {
+                fn drop(&mut self) {
+                    self.0.post(CGEventTapLocation::HID);
+                }
+            }
+            let _release = ReleaseHyper(
+                CGEvent::new_keyboard_event(source.clone(), KeyCode::F18, false).unwrap(),
+            );
+            CGEvent::new_keyboard_event(source.clone(), KeyCode::F18, true)
+                .unwrap()
+                .post(CGEventTapLocation::HID);
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            for direction in [WindowDirection::Next, WindowDirection::Previous] {
+                for offset in 1..=visible.len() {
+                    let expected_index = match direction {
+                        WindowDirection::Next => (index + offset) % visible.len(),
+                        WindowDirection::Previous => {
+                            (index + visible.len() - offset % visible.len()) % visible.len()
+                        }
+                    };
+                    let expected = &visible[expected_index];
+                    // Synthetic scrolls have no device inversion, so a negative
+                    // Quartz delta represents physical rightward finger motion.
+                    let delta = if direction == WindowDirection::Next {
+                        -80
+                    } else {
+                        80
+                    };
+                    let event =
+                        CGEvent::new_scroll_event(source.clone(), 0, 2, 0, delta, 0).unwrap();
+                    event.set_integer_value_field(EventField::SCROLL_WHEEL_EVENT_IS_CONTINUOUS, 1);
+                    event.set_integer_value_field(
+                        EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_2,
+                        delta.into(),
+                    );
+                    event.set_integer_value_field(99, 1);
+                    event.post(CGEventTapLocation::HID);
+                    std::thread::sleep(std::time::Duration::from_millis(80));
+                    event.set_integer_value_field(99, 4);
+                    event.set_integer_value_field(
+                        EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_2,
+                        0,
+                    );
+                    event.post(CGEventTapLocation::HID);
+                    let mut focused = false;
+                    for _ in 0..40 {
+                        if focused_window().is_some_and(|w| w == expected.element) {
+                            focused = true;
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                    }
+                    assert!(
+                        focused,
+                        "daemon {direction:?} step {offset} must focus target PID {} (actual {:?})",
+                        expected.pid,
+                        frontmost_pid()
+                    );
+                }
+            }
         });
     }
 }
