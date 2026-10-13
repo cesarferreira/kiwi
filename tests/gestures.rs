@@ -171,3 +171,167 @@ fn releasing_then_repressing_hyper_cannot_arm_an_existing_swipe() {
         Decision::Trigger(_)
     ));
 }
+
+fn vertical_engine() -> Engine {
+    Engine::new(
+        Config::from_toml(
+            r#"[bindings]
+"hyper+swipe_up" = { command = "snap full" }
+"hyper+swipe_down" = { command = "snap almost" }
+"hyper+swipe_right" = { window = "next" }
+"#,
+        )
+        .unwrap()
+        .compile()
+        .unwrap(),
+    )
+}
+#[test]
+fn vertical_bindings_fire_once_ignore_momentum_and_do_not_emit_escape() {
+    let mut e = vertical_engine();
+    hyper(&mut e, EventKind::Down);
+    assert_eq!(
+        scroll(&mut e, 0, -12, ScrollPhase::Began, false),
+        Decision::Suppress
+    );
+    assert_eq!(
+        scroll(&mut e, 0, -20, ScrollPhase::Changed, false),
+        Decision::Trigger(Action::RunCommand("snap full".into()))
+    );
+    assert_eq!(
+        scroll(&mut e, 80, 0, ScrollPhase::Changed, false),
+        Decision::Suppress
+    );
+    scroll(&mut e, 0, 0, ScrollPhase::Ended, false);
+    assert_eq!(hyper(&mut e, EventKind::Up), Decision::Suppress);
+    assert_eq!(
+        scroll(&mut e, 0, -100, ScrollPhase::None, true),
+        Decision::Suppress
+    );
+    hyper(&mut e, EventKind::Down);
+    assert_eq!(
+        scroll(&mut e, 0, 40, ScrollPhase::Began, false),
+        Decision::Trigger(Action::RunCommand("snap almost".into()))
+    );
+}
+#[test]
+fn vertical_gestures_require_hyper_from_the_start_and_ignore_diagonals() {
+    let mut e = vertical_engine();
+    assert_eq!(
+        scroll(&mut e, 0, -100, ScrollPhase::Began, false),
+        Decision::Pass
+    );
+    hyper(&mut e, EventKind::Down);
+    assert_eq!(
+        scroll(&mut e, 0, -100, ScrollPhase::Changed, false),
+        Decision::Pass
+    );
+    assert_eq!(
+        scroll(&mut e, 40, -40, ScrollPhase::Began, false),
+        Decision::Pass
+    );
+    assert_eq!(
+        scroll(&mut e, 40, -40, ScrollPhase::Changed, false),
+        Decision::Pass
+    );
+}
+#[test]
+fn unbound_vertical_direction_passes_and_cannot_turn_into_horizontal_action() {
+    let mut e = Engine::new(
+        Config::from_toml(
+            r#"[bindings]
+"hyper+swipe_up" = { command = "snap full" }
+"hyper+swipe_right" = { window = "next" }
+"#,
+        )
+        .unwrap()
+        .compile()
+        .unwrap(),
+    );
+    hyper(&mut e, EventKind::Down);
+    assert_eq!(
+        scroll(&mut e, 0, 70, ScrollPhase::Began, false),
+        Decision::Pass
+    );
+    assert_eq!(
+        scroll(&mut e, 300, 0, ScrollPhase::Changed, false),
+        Decision::Pass
+    );
+    assert_eq!(
+        scroll(&mut e, 0, -70, ScrollPhase::Began, false),
+        Decision::Trigger(Action::RunCommand("snap full".into()))
+    );
+}
+#[test]
+fn vertical_gestures_cannot_be_bound_without_hyper_or_emitted_as_keys() {
+    for (source, action) in [
+        ("swipe_up", "command = 'snap full'"),
+        ("hyper+x", "keys = 'swipe_down'"),
+    ] {
+        let contents = format!("[bindings]\n\"{source}\" = {{ {action} }}");
+        assert!(
+            Config::from_toml(&contents)
+                .and_then(Config::compile)
+                .is_err()
+        );
+    }
+    let cfg = Config::from_toml(
+        r#"[bindings]
+"hyper+swipe_up" = { command = "snap full" }
+"hyper+swipe_down" = { command = "snap almost" }
+"#,
+    )
+    .unwrap()
+    .compile()
+    .unwrap();
+    assert_eq!(cfg.hyper_binding_summary().len(), 2);
+    assert!(
+        cfg.hyper_binding_summary()
+            .iter()
+            .any(|row| row.key == "swipe_up" && row.action == "snap full")
+    );
+}
+
+#[test]
+fn provisional_capture_is_released_when_jitter_becomes_an_unbound_gesture() {
+    let mut e = Engine::new(
+        Config::from_toml(
+            r#"[bindings]
+"hyper+swipe_up" = { command = "snap full" }
+"#,
+        )
+        .unwrap()
+        .compile()
+        .unwrap(),
+    );
+    hyper(&mut e, EventKind::Down);
+    assert_eq!(
+        scroll(&mut e, 0, -1, ScrollPhase::Began, false),
+        Decision::Suppress
+    );
+    assert_eq!(
+        scroll(&mut e, 40, 0, ScrollPhase::Changed, false),
+        Decision::Pass
+    );
+    assert_eq!(
+        scroll(&mut e, 100, 0, ScrollPhase::None, true),
+        Decision::Pass
+    );
+}
+#[test]
+fn diagonal_contact_releases_provisional_capture_and_never_later_triggers() {
+    let mut e = vertical_engine();
+    hyper(&mut e, EventKind::Down);
+    assert_eq!(
+        scroll(&mut e, 0, -1, ScrollPhase::Began, false),
+        Decision::Suppress
+    );
+    assert_eq!(
+        scroll(&mut e, 40, 40, ScrollPhase::Changed, false),
+        Decision::Pass
+    );
+    assert_eq!(
+        scroll(&mut e, 300, 0, ScrollPhase::Changed, false),
+        Decision::Pass
+    );
+}

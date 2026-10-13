@@ -1,4 +1,4 @@
-//! Recognition of phased, continuous horizontal scrolls (trackpad two-finger swipes).
+//! Recognition of phased, continuous scrolls (trackpad two-finger swipes).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ScrollPhase {
     None,
@@ -10,12 +10,20 @@ pub enum ScrollPhase {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Scroll {
-    /// Point deltas normalized to physical finger motion: right is positive.
+    /// Point deltas normalized to physical finger motion: right/down are positive.
     pub x: i64,
     pub y: i64,
     pub phase: ScrollPhase,
     pub momentum: bool,
     pub continuous: bool,
+}
+
+#[derive(Clone, Copy, Default)]
+pub(crate) struct GestureBindings {
+    pub left: bool,
+    pub right: bool,
+    pub up: bool,
+    pub down: bool,
 }
 
 #[derive(Default)]
@@ -25,8 +33,9 @@ pub(crate) struct SwipeRecognizer {
     fired: bool,
     x: i64,
     y: i64,
-    left: bool,
-    right: bool,
+    travel_x: i64,
+    travel_y: i64,
+    bindings: GestureBindings,
 }
 pub(crate) struct SwipeOutcome {
     pub gesture: Option<&'static str>,
@@ -36,7 +45,12 @@ impl SwipeRecognizer {
     pub fn release_hyper(&mut self) {
         self.armed = false;
     }
-    pub fn handle(&mut self, scroll: Scroll, hyper: bool, left: bool, right: bool) -> SwipeOutcome {
+    pub fn handle(
+        &mut self,
+        scroll: Scroll,
+        hyper: bool,
+        bindings: GestureBindings,
+    ) -> SwipeOutcome {
         if scroll.momentum {
             return SwipeOutcome {
                 gesture: None,
@@ -53,8 +67,7 @@ impl SwipeRecognizer {
         if scroll.phase == ScrollPhase::Began {
             *self = Self {
                 armed: hyper && scroll.continuous,
-                left,
-                right,
+                bindings,
                 ..Self::default()
             };
         }
@@ -67,25 +80,58 @@ impl SwipeRecognizer {
             && matches!(scroll.phase, ScrollPhase::Began | ScrollPhase::Changed)
         {
             self.x = self.x.saturating_add(scroll.x);
-            self.y = self.y.saturating_add(scroll.y.saturating_abs());
-            // Lock out vertical gestures so changing direction cannot become a swipe.
-            if self.y >= 30 && self.y > self.x.saturating_abs() {
-                self.armed = false;
-            } else if self.x.saturating_abs() > self.y.saturating_mul(2) {
-                let bound = if self.x > 0 {
-                    self.right && right
+            self.y = self.y.saturating_add(scroll.y);
+            self.travel_x = self.travel_x.saturating_add(scroll.x.saturating_abs());
+            self.travel_y = self.travel_y.saturating_add(scroll.y.saturating_abs());
+            let candidate = if self.x.saturating_abs() > self.travel_y.saturating_mul(2) {
+                if self.x > 0 {
+                    Some((
+                        "swipe_right",
+                        self.x.saturating_abs(),
+                        self.bindings.right && bindings.right,
+                    ))
                 } else {
-                    self.left && left
-                };
-                self.suppress |= bound;
-                if bound && self.x.saturating_abs() >= 30 {
-                    gesture = Some(if self.x > 0 {
-                        "swipe_right"
-                    } else {
-                        "swipe_left"
-                    });
-                    self.fired = true;
+                    Some((
+                        "swipe_left",
+                        self.x.saturating_abs(),
+                        self.bindings.left && bindings.left,
+                    ))
                 }
+            } else if self.y.saturating_abs() > self.travel_x.saturating_mul(2) {
+                if self.y > 0 {
+                    Some((
+                        "swipe_down",
+                        self.y.saturating_abs(),
+                        self.bindings.down && bindings.down,
+                    ))
+                } else {
+                    Some((
+                        "swipe_up",
+                        self.y.saturating_abs(),
+                        self.bindings.up && bindings.up,
+                    ))
+                }
+            } else {
+                None
+            };
+            if let Some((name, distance, bound)) = candidate {
+                self.suppress |= bound;
+                if distance >= 30 {
+                    // An intentional unbound gesture must not turn into another
+                    // direction later in the same finger contact.
+                    self.armed = false;
+                    if bound {
+                        gesture = Some(name);
+                        self.fired = true;
+                    } else {
+                        self.suppress = false;
+                    }
+                }
+            } else if self.travel_x >= 30 && self.travel_y >= 30 {
+                // Initial one-axis jitter can look bound before the contact's
+                // intent is known. Let substantial diagonal scrolling through.
+                self.armed = false;
+                self.suppress = false;
             }
         }
         if matches!(scroll.phase, ScrollPhase::Ended | ScrollPhase::Cancelled) {

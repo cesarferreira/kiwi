@@ -51,8 +51,12 @@ impl EventDecoder {
                 ScrollPhase::None
             };
             return Some(Input::Scroll(Scroll {
-                x: if inverted { x } else { x.saturating_neg() },
-                y: event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_1),
+                x: physical_delta(x, inverted),
+                y: physical_delta(
+                    event
+                        .get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_1),
+                    inverted,
+                ),
                 phase,
                 momentum: event.get_integer_value_field(123) != 0,
                 continuous: event
@@ -72,6 +76,16 @@ impl EventDecoder {
             event.get_integer_value_field(EventField::KEYBOARD_EVENT_AUTOREPEAT) != 0,
             self.remap_caps,
         )
+    }
+}
+
+// Quartz deltas follow scroll direction. Normalize both axes to physical
+// finger motion so bindings remain the same with Natural scrolling on or off.
+fn physical_delta(delta: i64, inverted: bool) -> i64 {
+    if inverted {
+        delta
+    } else {
+        delta.saturating_neg()
     }
 }
 
@@ -155,7 +169,7 @@ mod tests {
                 decoder.input(CGEventType::ScrollWheel, &event),
                 Some(Input::Scroll(Scroll {
                     x: -40,
-                    y: 5,
+                    y: -5,
                     phase,
                     momentum: false,
                     continuous: true,
@@ -167,6 +181,18 @@ mod tests {
             panic!("expected scroll");
         };
         assert!(scroll.momentum);
+    }
+
+    #[test]
+    fn both_scroll_axes_normalize_natural_scrolling_to_physical_motion() {
+        for (raw, inverted, expected) in [
+            (40, true, 40),
+            (-40, false, 40),
+            (-40, true, -40),
+            (40, false, -40),
+        ] {
+            assert_eq!(super::physical_delta(raw, inverted), expected);
+        }
     }
 
     #[test]

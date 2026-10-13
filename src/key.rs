@@ -7,7 +7,10 @@ pub struct Key(Cow<'static, str>);
 
 impl Key {
     pub fn is_gesture(&self) -> bool {
-        matches!(self.as_str(), "swipe_left" | "swipe_right")
+        matches!(
+            self.as_str(),
+            "swipe_left" | "swipe_right" | "swipe_up" | "swipe_down"
+        )
     }
 
     pub fn as_str(&self) -> &str {
@@ -208,7 +211,9 @@ fn normalize_key(value: &str) -> String {
 fn is_key(value: &str) -> bool {
     matches!(
         value,
-        "swipe_left"
+        "swipe_up"
+            | "swipe_down"
+            | "swipe_left"
             | "swipe_right"
             | "caps_lock"
             | "escape"

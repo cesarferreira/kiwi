@@ -33,6 +33,9 @@ cheatsheet_delay_ms = 1000
 # Optional two-finger trackpad window cycling (hold Hyper while swiping).
 # "hyper+swipe_right" = { window = "next" }
 # "hyper+swipe_left" = { window = "previous" }
+# Optional vertical gestures; requires snap and stays unassigned by default.
+# "hyper+swipe_up" = { command = "snap full" }
+# "hyper+swipe_down" = { command = "snap almost" }
 
 # Other supported actions:
 # "hyper+b" = { url = "https://example.com" }

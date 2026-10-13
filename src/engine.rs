@@ -2,7 +2,7 @@ use std::{collections::BTreeSet, sync::Arc};
 
 use crate::{
     config::{Action, BindingSummary, CompiledConfig, FeedbackPolicy},
-    gestures::{Scroll, SwipeRecognizer},
+    gestures::{GestureBindings, Scroll, SwipeRecognizer},
     key::{Chord, Key, Modifier},
 };
 
@@ -96,15 +96,25 @@ impl Engine {
     }
 
     fn handle_scroll(&mut self, scroll: Scroll) -> Decision {
-        let right = self
-            .config
-            .action_for(&self.gesture_chord("swipe_right"))
-            .is_some();
-        let left = self
-            .config
-            .action_for(&self.gesture_chord("swipe_left"))
-            .is_some();
-        let outcome = self.swipe.handle(scroll, self.hyper_active, left, right);
+        let bindings = GestureBindings {
+            left: self
+                .config
+                .action_for(&self.gesture_chord("swipe_left"))
+                .is_some(),
+            right: self
+                .config
+                .action_for(&self.gesture_chord("swipe_right"))
+                .is_some(),
+            up: self
+                .config
+                .action_for(&self.gesture_chord("swipe_up"))
+                .is_some(),
+            down: self
+                .config
+                .action_for(&self.gesture_chord("swipe_down"))
+                .is_some(),
+        };
+        let outcome = self.swipe.handle(scroll, self.hyper_active, bindings);
         if let Some(name) = outcome.gesture {
             self.hyper_used = true;
             let chord = self.gesture_chord(name);

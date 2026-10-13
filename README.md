@@ -228,19 +228,28 @@ Add these opt-in entries inside your existing `[bindings]` table:
 ```toml
 "hyper+swipe_right" = { window = "next" }
 "hyper+swipe_left" = { window = "previous" }
+# Optional vertical gestures (requires snap on your command PATH):
+"hyper+swipe_up" = { command = "snap full" }
+"hyper+swipe_down" = { command = "snap almost" }
 # Optional keyboard equivalents, sharing the same cycling session:
 "hyper+tab" = { window = "next" }
 "hyper+shift+tab" = { window = "previous" }
 ```
 
-Hold Hyper before starting a two-finger horizontal swipe. Finger motion to the
-right selects the next window; left selects the previous, independently of the
-macOS **Natural scrolling** setting. A swipe must travel at least 30 scroll
-points horizontally and dominate vertical motion by more than 2:1. Each swipe
-fires once; momentum never fires another action. Ordinary scrolling without
-Hyper, vertical gestures, unbound directions, and phase-less mouse wheels pass
-through. A captured horizontal gesture and its momentum are consumed, including
-its tail after releasing Hyper. Using a gesture prevents the Hyper tap action.
+Hold Hyper before starting a two-finger swipe. `swipe_left`, `swipe_right`,
+`swipe_up`, and `swipe_down` describe physical finger motion, independently of
+macOS **Natural scrolling**. Each gesture can run any supported action. The
+vertical examples fill the display's usable area or leave a desktop inset;
+`snap almost` does not restore the previous window size. All gestures are opt-in,
+and up/down are unassigned in the generated config so ordinary vertical scrolling
+stays available while Hyper is held unless you configure those directions.
+
+A swipe must travel at least 30 scroll points on its intended axis and dominate
+motion on the other axis by more than 2:1. Each swipe fires once; momentum never
+fires another action. Ordinary scrolling without Hyper, unbound directions,
+diagonal motion, and phase-less mouse wheels do not trigger actions. A captured
+gesture and its momentum are consumed, including its tail after releasing Hyper.
+Using a gesture prevents the Hyper tap action.
 
 `window = "next"` / `"previous"` cycles individual on-screen windows on the
 focused window's display (the pointer's display if no window is focused),
