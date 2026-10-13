@@ -25,8 +25,16 @@ use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
 use crate::{config::WindowDirection, window_cycle::WindowCycle};
 
 type AxRef = CFTypeRef;
+#[repr(C)]
+#[derive(Default)]
+struct ProcessSerialNumber {
+    high: u32,
+    low: u32,
+}
 #[link(name = "ApplicationServices", kind = "framework")]
 unsafe extern "C" {
+    fn GetFrontProcess(process: *mut ProcessSerialNumber) -> i16;
+    fn GetProcessPID(process: *const ProcessSerialNumber, pid: *mut i32) -> i32;
     fn AXUIElementCreateApplication(pid: i32) -> AxRef;
     fn AXUIElementCreateSystemWide() -> AxRef;
     fn AXUIElementCopyAttributeValue(
@@ -121,7 +129,7 @@ impl WindowController {
         let application = application(window.pid);
         let raised = CFString::new("AXRaise");
         // SAFETY: Retained AX handles and CF strings/booleans live through calls.
-        unsafe {
+        let raise_status = unsafe {
             AXUIElementSetAttributeValue(
                 window.element.as_CFTypeRef(),
                 main.as_CFTypeRef(),
@@ -139,12 +147,10 @@ impl WindowController {
                 focused_window_attribute.as_CFTypeRef(),
                 window.element.as_CFTypeRef(),
             );
-            let status =
-                AXUIElementPerformAction(window.element.as_CFTypeRef(), raised.as_CFTypeRef());
-            if status != 0 {
-                bail!("could not raise selected window (Accessibility error {status})");
-            }
-        }
+            AXUIElementPerformAction(window.element.as_CFTypeRef(), raised.as_CFTypeRef())
+        };
+        // A messaging timeout does not prove the operation had no effect. Verify
+        // the actual focused handle before reporting any AXRaise failure.
         // App activation can finish asynchronously; this bounded wait is on
         // the action worker, never on the event-tap callback.
         for _ in 0..10 {
@@ -152,6 +158,9 @@ impl WindowController {
                 return Ok(());
             }
             std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        if raise_status != 0 {
+            bail!("selected window did not receive keyboard focus (AXRaise error {raise_status})");
         }
         bail!("selected window was raised but did not receive keyboard focus")
     }
@@ -184,11 +193,27 @@ fn application(pid: i32) -> CFType {
         app
     }
 }
-fn focused_window() -> Option<CFType> {
-    // SAFETY: System-wide AX creation returns an owned non-null element.
-    let system = unsafe { CFType::wrap_under_create_rule(AXUIElementCreateSystemWide()) };
-    attr(&attr(&system, "AXFocusedApplication")?, "AXFocusedWindow")
+fn frontmost_pid() -> Option<i32> {
+    // NSWorkspace/NSRunningApplication cache foreground state until their run
+    // loop runs. The action worker has no AppKit run loop, so use the synchronous
+    // process query despite its deprecation in favor of NSWorkspace.
+    let mut process = ProcessSerialNumber::default();
+    let mut pid = 0;
+    // SAFETY: The output buffers match the public HIServices ABI and live through
+    // both calls. GetProcessPID is called only for a successfully obtained PSN.
+    unsafe {
+        if GetFrontProcess(&mut process) != 0 || GetProcessPID(&process, &mut pid) != 0 {
+            return None;
+        }
+    }
+    Some(pid)
 }
+fn focused_window() -> Option<CFType> {
+    // System-wide AXFocusedApplication can return kAXErrorCannotComplete even
+    // while the actual frontmost app answers AXFocusedWindow.
+    attr(&application(frontmost_pid()?), "AXFocusedWindow")
+}
+
 fn bounds(window: &CFType) -> Option<CGRect> {
     let position = attr(window, "AXPosition")?;
     let size = attr(window, "AXSize")?;
@@ -302,4 +327,126 @@ fn visible_windows(display: CGRect) -> Result<Vec<Window>> {
         }
     }
     Ok(windows)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use objc2_app_kit::NSWorkspace;
+
+    #[test]
+    #[ignore = "requires an interactive macOS desktop and Accessibility permission"]
+    fn focused_window_matches_the_frontmost_application() {
+        assert!(super::super::accessibility_is_trusted());
+        objc2::rc::autoreleasepool(|_| {
+            let running = NSWorkspace::sharedWorkspace()
+                .frontmostApplication()
+                .expect("an application must be frontmost");
+            let direct = attr(&application(running.processIdentifier()), "AXFocusedWindow")
+                .expect("frontmost application must have a focused window");
+            assert!(
+                focused_window().is_some_and(|focused| focused == direct),
+                "focus lookup must return the frontmost app's actual focused window"
+            );
+        });
+    }
+    struct RestoreFocus(CFType);
+    impl Drop for RestoreFocus {
+        fn drop(&mut self) {
+            let mut pid = 0;
+            unsafe extern "C" {
+                fn AXUIElementGetPid(element: AxRef, pid: *mut i32) -> i32;
+            }
+            unsafe {
+                AXUIElementGetPid(self.0.as_CFTypeRef(), &mut pid);
+            }
+            let app = application(pid);
+            let yes = CFBoolean::true_value();
+            unsafe {
+                AXUIElementSetAttributeValue(
+                    app.as_CFTypeRef(),
+                    CFString::new("AXFrontmost").as_CFTypeRef(),
+                    yes.as_CFTypeRef(),
+                );
+                AXUIElementSetAttributeValue(
+                    self.0.as_CFTypeRef(),
+                    CFString::new("AXMain").as_CFTypeRef(),
+                    yes.as_CFTypeRef(),
+                );
+                AXUIElementSetAttributeValue(
+                    self.0.as_CFTypeRef(),
+                    CFString::new("AXFocused").as_CFTypeRef(),
+                    yes.as_CFTypeRef(),
+                );
+                AXUIElementPerformAction(
+                    self.0.as_CFTypeRef(),
+                    CFString::new("AXRaise").as_CFTypeRef(),
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "switches live windows; requires an interactive desktop and Accessibility permission"]
+    fn live_cycle_focuses_each_candidate_without_changing_bounds() {
+        assert!(super::super::accessibility_is_trusted());
+        objc2::rc::autoreleasepool(|_| {
+            let original = focused_window().expect("a window must be focused");
+            let _restore = RestoreFocus(original.clone());
+            let rect = bounds(&original).unwrap();
+            let center = CGPoint::new(
+                rect.origin.x + rect.size.width / 2.0,
+                rect.origin.y + rect.size.height / 2.0,
+            );
+            let display = CGDisplay::active_displays()
+                .unwrap()
+                .into_iter()
+                .map(|id| CGDisplay::new(id).bounds())
+                .find(|r| contains(*r, center))
+                .unwrap();
+            let visible = visible_windows(display).unwrap();
+            assert!(
+                visible.len() >= 2,
+                "open at least two accessible windows on the focused display"
+            );
+            let original_index = visible.iter().position(|w| w.element == original).unwrap();
+            let before: Vec<_> = visible
+                .iter()
+                .map(|w| {
+                    bounds(&w.element)
+                        .map(|r| (r.origin.x, r.origin.y, r.size.width, r.size.height))
+                })
+                .collect();
+            let mut controller = WindowController::default();
+            for offset in 1..=visible.len() {
+                let expected = &visible[(original_index + offset) % visible.len()];
+                if let Err(error) = controller.cycle(WindowDirection::Next) {
+                    let active = frontmost_pid();
+                    panic!(
+                        "cycle step {offset}: target PID {}, active PID {active:?}: {error}",
+                        expected.pid
+                    );
+                }
+                assert!(
+                    focused_window().is_some_and(|w| w == expected.element),
+                    "selected candidate must receive keyboard focus"
+                );
+            }
+            controller.cycle(WindowDirection::Previous).unwrap();
+            assert!(focused_window().is_some_and(
+                |w| w == visible[(original_index + visible.len() - 1) % visible.len()].element
+            ));
+            let after: Vec<_> = visible
+                .iter()
+                .map(|w| {
+                    bounds(&w.element)
+                        .map(|r| (r.origin.x, r.origin.y, r.size.width, r.size.height))
+                })
+                .collect();
+            assert_eq!(
+                before, after,
+                "cycling must preserve window position and size"
+            );
+        });
+    }
 }
