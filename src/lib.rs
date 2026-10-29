@@ -38,6 +38,9 @@ cheatsheet_delay_ms = 1000
 # "hyper+swipe_up" = { command = "snap full" }
 # "hyper+swipe_down" = { command = "snap almost" }
 
+# Optional double-tap of a single modifier key.
+# "double+right_command" = { app = "Raycast" }
+
 # Other supported actions:
 # "hyper+b" = { url = "https://example.com" }
 # "hyper+c" = { command = "open -a Calendar" }

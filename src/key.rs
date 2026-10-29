@@ -2,10 +2,28 @@ use std::{borrow::Cow, fmt, str::FromStr};
 
 use anyhow::{Result, bail};
 
+const DOUBLE_TAP: &str = "double_tap";
+
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Key(Cow<'static, str>);
 
 impl Key {
+    /// Virtual key for `double+<modifier>` bindings. It cannot be typed in a
+    /// chord, so only the `double+` syntax produces it.
+    pub fn double_tap() -> Self {
+        Self(Cow::Borrowed(DOUBLE_TAP))
+    }
+
+    pub fn is_double_tap(&self) -> bool {
+        self.as_str() == DOUBLE_TAP
+    }
+
+    /// Gestures and double-taps have no physical key, so they cannot be
+    /// emitted or used as the Hyper key.
+    pub fn is_virtual(&self) -> bool {
+        self.is_gesture() || self.is_double_tap()
+    }
+
     pub fn is_gesture(&self) -> bool {
         matches!(
             self.as_str(),
@@ -171,6 +189,19 @@ impl FromStr for Chord {
 
     fn from_str(value: &str) -> Result<Self> {
         let parts: Vec<_> = value.split('+').map(str::trim).collect();
+        if parts.iter().any(|part| part.eq_ignore_ascii_case("double")) {
+            let [prefix, modifier] = parts.as_slice() else {
+                bail!("`double` takes exactly one modifier, as in `double+right_command`");
+            };
+            if !prefix.eq_ignore_ascii_case("double") {
+                bail!("`double` must come first, as in `double+right_command`");
+            }
+            let modifier: Modifier = modifier.parse()?;
+            if modifier == Modifier::Hyper {
+                bail!("`double` needs a physical modifier key, not `hyper`");
+            }
+            return Ok(Self::new(vec![modifier], Key::double_tap()));
+        }
         let (key, modifier_parts) = parts
             .split_last()
             .ok_or_else(|| anyhow::anyhow!("key chord cannot be empty"))?;
@@ -188,6 +219,13 @@ impl FromStr for Chord {
 
 impl fmt::Display for Chord {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.key.is_double_tap() {
+            let modifier = self
+                .modifiers
+                .first()
+                .map_or("", |modifier| modifier.as_str());
+            return write!(formatter, "double+{modifier}");
+        }
         for modifier in &self.modifiers {
             write!(formatter, "{}+", modifier.as_str())?;
         }

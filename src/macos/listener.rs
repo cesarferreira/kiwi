@@ -158,7 +158,7 @@ fn observation_for(handled: &HandledEvent, color: bool, json: bool) -> Result<Op
         return Ok(None);
     };
     let action = match &handled.decision {
-        Decision::Trigger(action) => Some(action),
+        Decision::Trigger(action) | Decision::PassAndTrigger(action) => Some(action),
         _ => None,
     };
     if json {

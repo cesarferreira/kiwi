@@ -38,6 +38,7 @@ keyboard shortcuts.
 - Caps Lock → Hyper/Escape dual-role key
 - App, URL, command, key-sequence, and window-cycling actions
 - Optional Hyper + two-finger trackpad swipe bindings
+- Double-tap a modifier, such as right Command, to trigger an action
 - Hyper + `?` shows every Hyper binding in an on-screen cheatsheet
 - Generic and side-specific modifiers
 - Automatic config reloads, including symlinked dotfiles
@@ -154,6 +155,9 @@ cheatsheet = true
 
 # Side-specific modifiers work outside the Hyper layer.
 "left_option+h" = { keys = "left" }
+
+# Double-tap right Command to open Raycast.
+"double+right_command" = { app = "Raycast" }
 
 # Keep a binding in the file without activating it.
 "hyper+x" = { command = "say disabled", enabled = false }
@@ -295,6 +299,35 @@ with Natural scrolling both on and off, after closing a candidate, and with a
 minimized window or a window on another Space. Confirm ordinary scrolling and
 momentum never switch windows.
 
+#### Double-tap modifiers
+
+Press and release one modifier key twice quickly to run an action:
+
+```toml
+"double+right_command" = { app = "Raycast" }
+"double+right_shift" = { window = "next" }
+```
+
+A double-tap counts only when all of these are true:
+
+- Each press lasts at most 250 ms.
+- The second press starts within 300 ms of the first release.
+- No other key, modifier, scroll, or Hyper is used in between.
+- Both taps use the same physical key.
+
+The action runs when the second tap is released. A third quick tap starts a new
+double-tap. Kiwi never holds back or swallows the modifier events, so shortcuts
+such as ⌘C and typing behave exactly as before. A generic modifier such as
+`double+command` matches either side. A side-specific binding such as
+`double+right_command` takes precedence for its own side. Tapping left and then
+right Command does not count.
+
+`double+` takes exactly one modifier and cannot be `hyper`. Double-taps can use
+any action, but a `keys` action cannot emit one. They appear in `kiwi list` and
+`kiwi listen`, but not in the Hyper cheatsheet. Kiwi does not watch mouse
+clicks, so two quick ⌘-clicks with very short presses can also count as a
+double-tap.
+
 #### `app`
 
 ```toml
@@ -364,7 +397,11 @@ hyper+t
 command+shift+p
 left_option+h
 f12
+double+right_command
 ```
+
+`double+<modifier>` is a [double-tap](#double-tap-modifiers) of one modifier
+key, not a chord.
 
 Names are case-insensitive, `-` is normalized to `_`, and modifier order does
 not matter, so `Command+Shift+P` and `shift+command+p` are the same chord and

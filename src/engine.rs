@@ -1,4 +1,8 @@
-use std::{collections::BTreeSet, sync::Arc};
+use std::{
+    collections::BTreeSet,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use crate::{
     config::{Action, BindingSummary, CompiledConfig, FeedbackPolicy},
@@ -32,6 +36,22 @@ pub enum Decision {
     Suppress,
     PassWithModifiers(Vec<Modifier>),
     Trigger(Action),
+    /// Run the action but deliver the event, so a modifier release still
+    /// reaches apps.
+    PassAndTrigger(Action),
+}
+
+/// Longest press that still counts as a tap.
+pub const DOUBLE_TAP_HOLD: Duration = Duration::from_millis(250);
+/// Longest pause between the first release and the second press.
+pub const DOUBLE_TAP_GAP: Duration = Duration::from_millis(300);
+
+#[derive(Clone, Copy, Debug)]
+struct ModifierTap {
+    modifier: Modifier,
+    pressed_at: Duration,
+    released_at: Option<Duration>,
+    second: bool,
 }
 
 pub struct Engine {
@@ -42,8 +62,10 @@ pub struct Engine {
     consumed_keys: BTreeSet<Key>,
     rewritten_keys: BTreeSet<Key>,
     swipe: SwipeRecognizer,
-    last_gesture: Option<Chord>,
+    last_virtual_chord: Option<Chord>,
     cheatsheet_requested: bool,
+    modifier_tap: Option<ModifierTap>,
+    started: Instant,
 }
 
 impl Engine {
@@ -56,17 +78,28 @@ impl Engine {
             consumed_keys: BTreeSet::new(),
             rewritten_keys: BTreeSet::new(),
             swipe: SwipeRecognizer::default(),
-            last_gesture: None,
+            last_virtual_chord: None,
             cheatsheet_requested: false,
+            modifier_tap: None,
+            started: Instant::now(),
         }
     }
 
     pub fn handle(&mut self, input: Input) -> Decision {
-        self.last_gesture = None;
+        self.handle_at(input, self.started.elapsed())
+    }
+
+    /// Handles `input` as if it arrived `now` after an arbitrary fixed origin.
+    pub fn handle_at(&mut self, input: Input, now: Duration) -> Decision {
+        self.last_virtual_chord = None;
         self.cheatsheet_requested = false;
+        if !matches!(input, Input::Modifier { .. }) {
+            self.modifier_tap = None;
+        }
         match input {
             Input::Scroll(scroll) => self.handle_scroll(scroll),
             Input::Modifier { modifier, kind } => {
+                let decision = self.handle_modifier_tap(modifier, kind, now);
                 match kind {
                     EventKind::Down => {
                         self.held_modifiers.insert(modifier);
@@ -78,14 +111,16 @@ impl Engine {
                         self.held_modifiers.remove(&modifier);
                     }
                 }
-                Decision::Pass
+                decision
             }
             Input::Key { key, kind, repeat } => self.handle_key(key, kind, repeat),
         }
     }
 
-    pub fn last_gesture(&self) -> Option<Chord> {
-        self.last_gesture.clone()
+    /// The swipe or double-tap chord matched by the last input, which has no
+    /// physical key of its own.
+    pub fn last_virtual_chord(&self) -> Option<Chord> {
+        self.last_virtual_chord.clone()
     }
 
     /// True when the last handled input was an unbound Hyper+`/` (the `?` key)
@@ -102,6 +137,65 @@ impl Engine {
         let mut modifiers: Vec<_> = self.held_modifiers.iter().copied().collect();
         modifiers.push(Modifier::Hyper);
         Chord::new(modifiers, name.parse().expect("known gesture"))
+    }
+
+    // Called before `held_modifiers` records this event. The modifier events
+    // always pass through, so ordinary shortcuts and typing never wait on it.
+    fn handle_modifier_tap(
+        &mut self,
+        modifier: Modifier,
+        kind: EventKind,
+        now: Duration,
+    ) -> Decision {
+        let alone = !self.hyper_active && self.held_modifiers.iter().all(|held| *held == modifier);
+        if !alone {
+            self.modifier_tap = None;
+            return Decision::Pass;
+        }
+        match kind {
+            EventKind::Down => {
+                let second = self.modifier_tap.is_some_and(|tap| {
+                    tap.modifier == modifier
+                        && !tap.second
+                        && tap
+                            .released_at
+                            .is_some_and(|released| now.saturating_sub(released) <= DOUBLE_TAP_GAP)
+                });
+                self.modifier_tap = Some(ModifierTap {
+                    modifier,
+                    pressed_at: now,
+                    released_at: None,
+                    second,
+                });
+                Decision::Pass
+            }
+            EventKind::Up => {
+                let Some(tap) = self.modifier_tap.take() else {
+                    return Decision::Pass;
+                };
+                if tap.modifier != modifier
+                    || tap.released_at.is_some()
+                    || now.saturating_sub(tap.pressed_at) > DOUBLE_TAP_HOLD
+                {
+                    return Decision::Pass;
+                }
+                if !tap.second {
+                    self.modifier_tap = Some(ModifierTap {
+                        released_at: Some(now),
+                        ..tap
+                    });
+                    return Decision::Pass;
+                }
+                let chord = Chord::new(vec![modifier], Key::double_tap());
+                match self.config.action_for(&chord).cloned() {
+                    Some(action) => {
+                        self.last_virtual_chord = Some(chord);
+                        Decision::PassAndTrigger(action)
+                    }
+                    None => Decision::Pass,
+                }
+            }
+        }
     }
 
     fn handle_scroll(&mut self, scroll: Scroll) -> Decision {
@@ -127,7 +221,7 @@ impl Engine {
         if let Some(name) = outcome.gesture {
             self.hyper_used = true;
             let chord = self.gesture_chord(name);
-            self.last_gesture = Some(chord.clone());
+            self.last_virtual_chord = Some(chord.clone());
             if let Some(action) = self.config.action_for(&chord) {
                 return Decision::Trigger(action.clone());
             }

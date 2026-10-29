@@ -198,6 +198,36 @@ pub(crate) fn report_reload_notices(config_path: &Path, notices: &[ReloadNotice]
     }
 }
 
+fn dispatch(
+    action_job: Option<ActionJob>,
+    actions: &mpsc::Sender<WorkerMessage>,
+    hyper_active: bool,
+) {
+    let Some(action_job) = action_job else {
+        eprintln!("kiwi action dispatch failed: action job was not created");
+        return;
+    };
+    if let Err(error) = actions.send(WorkerMessage::Action(action_job, hyper_active)) {
+        eprintln!("kiwi action worker stopped: {error}");
+    }
+}
+
+fn pass_through(event: &CGEvent, strip_caps_flag: bool) -> CallbackResult {
+    if strip_caps_flag
+        && event
+            .get_flags()
+            .contains(CGEventFlags::CGEventFlagAlphaShift)
+    {
+        let replacement = event.clone();
+        let mut flags = event.get_flags();
+        flags.remove(CGEventFlags::CGEventFlagAlphaShift);
+        replacement.set_flags(flags);
+        CallbackResult::Replace(replacement)
+    } else {
+        CallbackResult::Keep
+    }
+}
+
 fn apply_decision(
     decision: Decision,
     action_job: Option<ActionJob>,
@@ -207,31 +237,15 @@ fn apply_decision(
     hyper_active: bool,
 ) -> CallbackResult {
     match decision {
-        Decision::Pass => {
-            if strip_caps_flag
-                && event
-                    .get_flags()
-                    .contains(CGEventFlags::CGEventFlagAlphaShift)
-            {
-                let replacement = event.clone();
-                let mut flags = event.get_flags();
-                flags.remove(CGEventFlags::CGEventFlagAlphaShift);
-                replacement.set_flags(flags);
-                CallbackResult::Replace(replacement)
-            } else {
-                CallbackResult::Keep
-            }
-        }
+        Decision::Pass => pass_through(event, strip_caps_flag),
         Decision::Suppress => CallbackResult::Drop,
         Decision::Trigger(_) => {
-            let Some(action_job) = action_job else {
-                eprintln!("kiwi action dispatch failed: action job was not created");
-                return CallbackResult::Drop;
-            };
-            if let Err(error) = actions.send(WorkerMessage::Action(action_job, hyper_active)) {
-                eprintln!("kiwi action worker stopped: {error}");
-            }
+            dispatch(action_job, actions, hyper_active);
             CallbackResult::Drop
+        }
+        Decision::PassAndTrigger(_) => {
+            dispatch(action_job, actions, hyper_active);
+            pass_through(event, strip_caps_flag)
         }
         Decision::PassWithModifiers(modifiers) => {
             let replacement = event.clone();

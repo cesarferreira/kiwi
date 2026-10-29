@@ -89,10 +89,10 @@ impl ReloadingEngine {
             hyper_layer = Some(self.cheatsheet_now());
         }
         let cycle_reset = was_hyper && !self.engine.hyper_active();
-        let preview_chord = self.engine.last_gesture().or(preview_chord);
+        let preview_chord = self.engine.last_virtual_chord().or(preview_chord);
         let chord = preview.then(|| preview_chord.clone()).flatten();
         let action_job = match &decision {
-            Decision::Trigger(action) => {
+            Decision::Trigger(action) | Decision::PassAndTrigger(action) => {
                 job_chord(action, preview_chord, pressed_key).map(|chord| ActionJob {
                     chord,
                     action: action.clone(),
@@ -350,6 +350,33 @@ feedback = "all"
         assert_eq!(delay_ms, 0);
         assert_eq!(total, 78);
         assert_eq!(rows.len(), 64);
+    }
+
+    #[test]
+    fn double_tap_creates_an_action_job_named_after_the_double_tap() {
+        let (_sender, receiver) = mpsc::channel();
+        let mut runtime = ReloadingEngine::new(
+            config(
+                r#"
+                [bindings]
+                "double+right_command" = { app = "Raycast" }
+                "#,
+            ),
+            receiver,
+        );
+        let tap = |kind| Input::Modifier {
+            modifier: crate::key::Modifier::RightCommand,
+            kind,
+        };
+
+        for kind in [EventKind::Down, EventKind::Up, EventKind::Down] {
+            assert!(runtime.handle(tap(kind)).action_job.is_none());
+        }
+        let fired = runtime.handle(tap(EventKind::Up));
+        assert_eq!(fired.decision, Decision::PassAndTrigger(launch("Raycast")));
+        let job = fired.action_job.unwrap();
+        assert_eq!(job.chord.to_string(), "double+right_command");
+        assert_eq!(job.action, launch("Raycast"));
     }
 
     #[test]

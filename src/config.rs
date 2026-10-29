@@ -336,7 +336,7 @@ impl HyperSpec {
     fn compile(self) -> Result<Hyper> {
         let key: Key = self.key.parse().context("invalid hyper key")?;
         let tap: Chord = self.tap.parse().context("invalid hyper tap action")?;
-        if key.is_gesture() || tap.key.is_gesture() {
+        if key.is_virtual() || tap.key.is_virtual() {
             bail!("hyper key and tap must be keyboard keys");
         }
         let modifiers = self
@@ -507,8 +507,8 @@ fn compile_atomic_action(
     }
     let keys = keys.expect("exactly one atomic action was present");
     let chord: Chord = keys.parse().context("invalid `keys` action")?;
-    if chord.key.is_gesture() {
-        bail!("a `keys` action cannot emit a gesture");
+    if chord.key.is_virtual() {
+        bail!("a `keys` action cannot emit a gesture or double-tap");
     }
     if chord.has(Modifier::Hyper) {
         bail!("a `keys` action cannot emit the virtual `hyper` modifier");
