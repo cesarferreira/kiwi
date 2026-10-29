@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0] - 2026-10-29
+
+### 🚀 Features
+
+- Add Hyper trackpad gestures and window cycling ([#19](https://github.com/cesarferreira/kiwi/issues/19))
+- Show the Hyper cheatsheet on Hyper+? and restyle the overlay
+- Trigger actions by double-tapping a modifier key
+
+### 💼 Other
+
+- Improved launchd
 ## [0.4.3] - 2026-09-09
 
 ### 💼 Other
