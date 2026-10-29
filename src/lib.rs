@@ -16,6 +16,7 @@ modifiers = ["command", "control", "option", "shift"]
 [ui]
 feedback = "errors"
 style = "notification"
+# Hold Hyper to show every Hyper binding. Hyper+? shows it at once, even when this is false.
 cheatsheet = true
 cheatsheet_delay_ms = 1000
 

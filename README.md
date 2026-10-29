@@ -38,6 +38,7 @@ keyboard shortcuts.
 - Caps Lock → Hyper/Escape dual-role key
 - App, URL, command, key-sequence, and window-cycling actions
 - Optional Hyper + two-finger trackpad swipe bindings
+- Hyper + `?` shows every Hyper binding in an on-screen cheatsheet
 - Generic and side-specific modifiers
 - Automatic config reloads, including symlinked dotfiles
 - No Karabiner-Elements or Raycast dependency
@@ -202,7 +203,7 @@ Optional. Controls action notifications and the Hyper cheatsheet overlay.
 |---|---|---|
 | `feedback` | `"off"`, `"errors"`, or `"all"` | `"errors"` |
 | `style` | `"notification"` | `"notification"` |
-| `cheatsheet` | `true` or `false` | `true` |
+| `cheatsheet` | `true` or `false` (show the cheatsheet when Hyper is held) | `true` |
 | `cheatsheet_delay_ms` | `0` through `5000` | `1000` |
 
 `errors` reports failed actions, `all` also reports successful ones, and `off`
@@ -215,6 +216,13 @@ With `cheatsheet = true`, holding Hyper past `cheatsheet_delay_ms` shows a panel
 listing every enabled Hyper binding. `kiwi validate` then rejects more than 64
 enabled Hyper bindings so the overlay can show all of them; larger maps stay
 valid with the cheatsheet off.
+
+Press **Hyper + `?`** (the `/` key) to open the cheatsheet at once, without
+waiting for the delay. It stays open while you hold Hyper and closes when you
+release it. The `/` key press is not sent to the focused app. If you bind
+`hyper+slash` yourself, your binding runs instead. Hyper + `?` also works with
+`cheatsheet = false`, so you can turn off the hold popup and open the cheatsheet
+only on demand. In that case it shows at most the first 64 Hyper bindings.
 
 ### `[bindings]`
 

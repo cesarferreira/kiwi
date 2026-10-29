@@ -43,6 +43,7 @@ pub struct Engine {
     rewritten_keys: BTreeSet<Key>,
     swipe: SwipeRecognizer,
     last_gesture: Option<Chord>,
+    cheatsheet_requested: bool,
 }
 
 impl Engine {
@@ -56,11 +57,13 @@ impl Engine {
             rewritten_keys: BTreeSet::new(),
             swipe: SwipeRecognizer::default(),
             last_gesture: None,
+            cheatsheet_requested: false,
         }
     }
 
     pub fn handle(&mut self, input: Input) -> Decision {
         self.last_gesture = None;
+        self.cheatsheet_requested = false;
         match input {
             Input::Scroll(scroll) => self.handle_scroll(scroll),
             Input::Modifier { modifier, kind } => {
@@ -83,6 +86,12 @@ impl Engine {
 
     pub fn last_gesture(&self) -> Option<Chord> {
         self.last_gesture.clone()
+    }
+
+    /// True when the last handled input was an unbound Hyper+`/` (the `?` key)
+    /// asking for the cheatsheet right away.
+    pub fn cheatsheet_requested(&self) -> bool {
+        self.cheatsheet_requested
     }
 
     pub fn hyper_active(&self) -> bool {
@@ -140,6 +149,10 @@ impl Engine {
 
     pub fn hyper_key(&self) -> &Key {
         &self.config.hyper.key
+    }
+
+    pub(crate) fn cheatsheet_rows(&self) -> Arc<[BindingSummary]> {
+        self.config.hyper_binding_summary()
     }
 
     pub(crate) fn cheatsheet(&self) -> Option<(Arc<[BindingSummary]>, u64)> {
@@ -201,6 +214,11 @@ impl Engine {
             if let Some(action) = self.config.action_for(&chord).cloned() {
                 self.consumed_keys.insert(key);
                 return Decision::Trigger(action);
+            }
+            if self.hyper_active && key.as_str() == "slash" {
+                self.consumed_keys.insert(key);
+                self.cheatsheet_requested = true;
+                return Decision::Suppress;
             }
             if self.hyper_active {
                 self.rewritten_keys.insert(key);

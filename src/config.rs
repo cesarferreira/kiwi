@@ -12,7 +12,7 @@ use serde::{Deserialize, Deserializer, Serialize, de};
 
 use crate::key::{Chord, Key, Modifier};
 
-const MAX_BINDING_SUMMARY_ROWS: usize = 64;
+pub(crate) const MAX_BINDING_SUMMARY_ROWS: usize = 64;
 const MAX_BINDING_SUMMARY_TEXT_CHARS: usize = 160;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

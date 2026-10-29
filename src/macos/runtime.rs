@@ -1,7 +1,7 @@
 use std::sync::{Arc, mpsc::Receiver};
 
 use crate::{
-    config::{Action, BindingSummary, CompiledConfig},
+    config::{Action, BindingSummary, CompiledConfig, MAX_BINDING_SUMMARY_ROWS},
     engine::{Decision, Engine, EventKind, Input},
     key::{Chord, Key},
 };
@@ -77,7 +77,7 @@ impl ReloadingEngine {
         self.apply_if_idle(&mut notices);
 
         let preview_chord = self.engine.preview_chord(&input);
-        let hyper_layer = self.hyper_transition(&input);
+        let mut hyper_layer = self.hyper_transition(&input);
 
         let pressed_key = match &input {
             Input::Key { key, .. } => Some(key.clone()),
@@ -85,6 +85,9 @@ impl ReloadingEngine {
         };
         let was_hyper = self.engine.hyper_active();
         let decision = self.engine.handle(input);
+        if self.engine.cheatsheet_requested() {
+            hyper_layer = Some(self.cheatsheet_now());
+        }
         let cycle_reset = was_hyper && !self.engine.hyper_active();
         let preview_chord = self.engine.last_gesture().or(preview_chord);
         let chord = preview.then(|| preview_chord.clone()).flatten();
@@ -128,6 +131,22 @@ impl ReloadingEngine {
                 })
             }
             EventKind::Up => Some(HyperLayerTransition::Hide),
+        }
+    }
+
+    // Hyper+? works even with `[ui].cheatsheet = false`, where validation does
+    // not cap the binding count, so keep the overlay within its row limit.
+    fn cheatsheet_now(&self) -> HyperLayerTransition {
+        let rows = self.engine.cheatsheet_rows();
+        let rows = if rows.len() > MAX_BINDING_SUMMARY_ROWS {
+            rows[..MAX_BINDING_SUMMARY_ROWS].into()
+        } else {
+            rows
+        };
+        HyperLayerTransition::Show {
+            rows,
+            generation: self.generation,
+            delay_ms: 0,
         }
     }
 
@@ -275,6 +294,62 @@ feedback = "all"
             runtime.handle(release("caps_lock")).hyper_layer,
             Some(HyperLayerTransition::Hide)
         );
+    }
+
+    #[test]
+    fn hyper_question_mark_shows_the_cheatsheet_without_delay() {
+        let (_sender, receiver) = mpsc::channel();
+        let mut runtime = ReloadingEngine::new(
+            config(
+                r#"
+                [ui]
+                cheatsheet_delay_ms = 2000
+                [bindings]
+                "hyper+a" = { app = "Arc" }
+                "#,
+            ),
+            receiver,
+        );
+
+        runtime.handle(press("caps_lock"));
+        let asked = runtime.handle(press("slash"));
+        assert_eq!(asked.decision, Decision::Suppress);
+        assert!(asked.action_job.is_none());
+        let Some(HyperLayerTransition::Show { rows, delay_ms, .. }) = asked.hyper_layer else {
+            panic!("expected immediate show");
+        };
+        assert_eq!(delay_ms, 0);
+        assert_eq!(rows[0].key, "a");
+        assert!(runtime.handle(release("slash")).hyper_layer.is_none());
+        assert_eq!(
+            runtime.handle(release("caps_lock")).hyper_layer,
+            Some(HyperLayerTransition::Hide)
+        );
+    }
+
+    #[test]
+    fn hyper_question_mark_works_with_hold_cheatsheet_off_and_caps_rows() {
+        let mut contents = String::from("[ui]\ncheatsheet = false\n[bindings]\n");
+        for prefix in ["hyper", "hyper+shift", "hyper+option"] {
+            for letter in 'a'..='z' {
+                contents.push_str(&format!("\"{prefix}+{letter}\" = {{ app = \"Arc\" }}\n"));
+            }
+        }
+        let compiled = config(&contents);
+        let total = compiled.hyper_binding_summary().len();
+        let (_sender, receiver) = mpsc::channel();
+        let mut runtime = ReloadingEngine::new(compiled, receiver);
+
+        let down = runtime.handle(press("caps_lock"));
+        assert!(down.hyper_layer.is_none(), "hold popup stays off");
+        let asked = runtime.handle(press("slash"));
+        assert_eq!(asked.decision, Decision::Suppress);
+        let Some(HyperLayerTransition::Show { rows, delay_ms, .. }) = asked.hyper_layer else {
+            panic!("expected immediate show");
+        };
+        assert_eq!(delay_ms, 0);
+        assert_eq!(total, 78);
+        assert_eq!(rows.len(), 64);
     }
 
     #[test]

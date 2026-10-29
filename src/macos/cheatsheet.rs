@@ -88,19 +88,51 @@ fn wait_for_parent_eof(reader: &mut impl Read) -> io::Result<()> {
 }
 
 fn show_native_overlay(model: &CheatsheetModel) -> Result<()> {
-    use objc2::{MainThreadMarker, MainThreadOnly};
+    use objc2::{MainThreadMarker, MainThreadOnly, runtime::AnyObject};
     use objc2_app_kit::{
-        NSApplication, NSBackingStoreType, NSColor, NSFloatingWindowLevel, NSFont, NSPanel,
-        NSScreen, NSTextField, NSWindowStyleMask,
+        NSApplication, NSBackingStoreType, NSBox, NSBoxType, NSColor, NSFloatingWindowLevel,
+        NSFont, NSFontAttributeName, NSForegroundColorAttributeName, NSPanel, NSScreen,
+        NSTextField, NSTitlePosition, NSWindowStyleMask,
     };
-    use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
+    use objc2_foundation::{
+        NSAttributedString, NSDictionary, NSMutableAttributedString, NSPoint, NSRect, NSSize,
+        NSString,
+    };
 
+    const PADDING: f64 = 22.0;
     let mtm = MainThreadMarker::new().context("cheatsheet helper must run on its main thread")?;
     let screen = NSScreen::mainScreen(mtm).context("no macOS main screen is available")?;
     let visible = screen.visibleFrame();
-    let width = visible.size.width.min(760.0);
-    let desired_height = 88.0 + model.rows.len() as f64 * 22.0;
-    let height = desired_height.min((visible.size.height - 40.0).max(180.0));
+
+    let text = NSMutableAttributedString::from_nsstring(&NSString::from_str(""));
+    for (span, tint) in render_spans(model) {
+        let (red, green, blue) = tint.rgb();
+        let color = NSColor::colorWithSRGBRed_green_blue_alpha(red, green, blue, 1.0);
+        let font = NSFont::monospacedSystemFontOfSize_weight(tint.font_size(), tint.weight());
+        let objects: [&AnyObject; 2] = [color.as_ref(), font.as_ref()];
+        // SAFETY: AppKit attribute keys are immutable statics, and each value
+        // has the type AppKit documents for its key.
+        let attributes = unsafe {
+            NSDictionary::from_slices(
+                &[NSForegroundColorAttributeName, NSFontAttributeName],
+                &objects,
+            )
+        };
+        // SAFETY: `attributes` holds only valid foreground color and font values.
+        let span = unsafe {
+            NSAttributedString::new_with_attributes(&NSString::from_str(&span), &attributes)
+        };
+        text.appendAttributedString(&span);
+    }
+
+    let label = NSTextField::labelWithAttributedString(&text, mtm);
+    label.setMaximumNumberOfLines(0);
+    label.setLineBreakMode(objc2_app_kit::NSLineBreakMode::ByTruncatingTail);
+    let fitting = label.fittingSize();
+    let max_width = (visible.size.width - 80.0).max(240.0);
+    let max_height = (visible.size.height - 40.0).max(180.0);
+    let width = (fitting.width + PADDING * 2.0).min(max_width).ceil();
+    let height = (fitting.height + PADDING * 2.0).min(max_height).ceil();
     let origin = NSPoint::new(
         visible.origin.x + (visible.size.width - width) / 2.0,
         visible.origin.y + (visible.size.height - height) / 2.0,
@@ -120,23 +152,29 @@ fn show_native_overlay(model: &CheatsheetModel) -> Result<()> {
     window.setOpaque(false);
     window.setHasShadow(true);
     window.setIgnoresMouseEvents(true);
-    window.setBackgroundColor(Some(&NSColor::colorWithSRGBRed_green_blue_alpha(
-        0.06, 0.07, 0.09, 0.96,
-    )));
+    window.setBackgroundColor(Some(&NSColor::clearColor()));
 
-    let text = NSString::from_str(&render_text(model));
-    let label = NSTextField::labelWithString(&text, mtm);
-    label.setFrame(NSRect::new(
-        NSPoint::new(24.0, 20.0),
-        NSSize::new(width - 48.0, height - 40.0),
+    let frame = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(width, height));
+    let background = NSBox::initWithFrame(NSBox::alloc(mtm), frame);
+    background.setBoxType(NSBoxType::Custom);
+    background.setTitlePosition(NSTitlePosition::NoTitle);
+    background.setCornerRadius(14.0);
+    background.setBorderWidth(1.5);
+    background.setBorderColor(&NSColor::colorWithSRGBRed_green_blue_alpha(
+        0.55, 0.85, 0.30, 0.65,
     ));
-    label.setTextColor(Some(&NSColor::whiteColor()));
-    label.setFont(Some(&NSFont::monospacedSystemFontOfSize_weight(15.0, 0.0)));
-    label.setMaximumNumberOfLines((model.rows.len() + 3) as isize);
-    label.setLineBreakMode(objc2_app_kit::NSLineBreakMode::ByTruncatingTail);
+    background.setFillColor(&NSColor::colorWithSRGBRed_green_blue_alpha(
+        0.07, 0.08, 0.10, 0.97,
+    ));
+
+    label.setFrame(NSRect::new(
+        NSPoint::new(PADDING, PADDING),
+        NSSize::new(width - PADDING * 2.0, height - PADDING * 2.0),
+    ));
     let content = window
         .contentView()
         .context("cheatsheet window has no content view")?;
+    content.addSubview(&background);
     content.addSubview(&label);
     window.orderFrontRegardless();
     app.run();
@@ -147,7 +185,61 @@ fn overlay_activation_policy() -> objc2_app_kit::NSApplicationActivationPolicy {
     objc2_app_kit::NSApplicationActivationPolicy::Accessory
 }
 
-fn render_text(model: &CheatsheetModel) -> String {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Tint {
+    Title,
+    Muted,
+    Key,
+    Action,
+    App,
+    Url,
+    Command,
+    Keys,
+    Window,
+    Sequence,
+}
+
+impl Tint {
+    fn for_kind(kind: &str) -> Self {
+        match kind {
+            "app" => Self::App,
+            "url" => Self::Url,
+            "command" => Self::Command,
+            "keys" => Self::Keys,
+            "window" => Self::Window,
+            "sequence" => Self::Sequence,
+            _ => Self::Muted,
+        }
+    }
+
+    fn rgb(self) -> (f64, f64, f64) {
+        match self {
+            Self::Title | Self::Key => (0.55, 0.85, 0.30),
+            Self::Muted => (0.50, 0.53, 0.60),
+            Self::Action => (0.90, 0.91, 0.94),
+            Self::App => (0.40, 0.70, 1.00),
+            Self::Url => (0.75, 0.55, 1.00),
+            Self::Command => (1.00, 0.62, 0.30),
+            Self::Keys => (1.00, 0.85, 0.35),
+            Self::Window => (0.35, 0.85, 0.80),
+            Self::Sequence => (1.00, 0.50, 0.70),
+        }
+    }
+
+    fn weight(self) -> f64 {
+        match self {
+            Self::Title | Self::Key => 0.4,
+            Self::Action | Self::Muted => 0.0,
+            _ => 0.23,
+        }
+    }
+
+    fn font_size(self) -> f64 {
+        if self == Self::Title { 16.0 } else { 14.0 }
+    }
+}
+
+fn render_spans(model: &CheatsheetModel) -> Vec<(String, Tint)> {
     let key_width = model
         .rows
         .iter()
@@ -162,17 +254,28 @@ fn render_text(model: &CheatsheetModel) -> String {
         .max()
         .unwrap_or(4)
         .max(4);
-    let mut output = format!(
-        "KIWI · HYPER\n\n{:<key_width$}  {:<type_width$}  ACTION\n",
-        "KEY", "TYPE"
-    );
-    for row in model.rows.iter() {
-        output.push_str(&format!(
-            "{:<key_width$}  {:<type_width$}  {}\n",
-            row.key, row.kind, row.action
+    let mut spans = vec![
+        ("🥝 kiwi".to_string(), Tint::Title),
+        ("  hyper shortcuts\n\n".to_string(), Tint::Muted),
+        (
+            format!("{:<key_width$}  {:<type_width$}  ACTION\n", "KEY", "TYPE"),
+            Tint::Muted,
+        ),
+    ];
+    for (index, row) in model.rows.iter().enumerate() {
+        let newline = if index + 1 < model.rows.len() {
+            "\n"
+        } else {
+            ""
+        };
+        spans.push((format!("{:<key_width$}  ", row.key), Tint::Key));
+        spans.push((
+            format!("{:<type_width$}  ", row.kind),
+            Tint::for_kind(&row.kind),
         ));
+        spans.push((format!("{}{newline}", row.action), Tint::Action));
     }
-    output
+    spans
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -224,7 +327,10 @@ impl WorkerState {
                 self.phase = WorkerPhase::Pending { deadline, model };
                 WorkerEffect::Schedule
             }
-            WorkerPhase::Pending { model: current, .. } if current == &model => WorkerEffect::None,
+            WorkerPhase::Pending {
+                model: current,
+                deadline: pending,
+            } if current == &model && *pending <= deadline => WorkerEffect::None,
             WorkerPhase::Pending { .. } => {
                 self.phase = WorkerPhase::Pending { deadline, model };
                 WorkerEffect::Schedule
@@ -482,6 +588,21 @@ mod tests {
     }
 
     #[test]
+    fn immediate_request_pulls_a_pending_delay_forward() {
+        let model = CheatsheetModel {
+            generation: 5,
+            rows: Vec::new().into(),
+        };
+        let mut state = WorkerState::default();
+        let now = Duration::from_secs(1);
+
+        assert_eq!(state.show(now, 1000, model.clone()), WorkerEffect::Schedule);
+        let asked_at = now + Duration::from_millis(200);
+        assert_eq!(state.show(asked_at, 0, model), WorkerEffect::Schedule);
+        assert_eq!(state.deadline_elapsed(asked_at), WorkerEffect::Spawn);
+    }
+
+    #[test]
     fn worker_spawns_at_deadline_and_hides_visible_child_immediately() {
         let model = CheatsheetModel {
             generation: 2,
@@ -623,6 +744,36 @@ mod tests {
 
         assert_eq!(reader.remaining, 0);
         assert_eq!(reader.largest_buffer.get(), 1);
+    }
+
+    #[test]
+    fn spans_keep_columns_aligned_and_tint_each_action_type() {
+        let row = |key: &str, kind: &str, action: &str| BindingSummary {
+            key: key.into(),
+            kind: kind.into(),
+            action: action.into(),
+        };
+        let model = CheatsheetModel {
+            generation: 0,
+            rows: vec![
+                row("t", "app", "Ghostty"),
+                row("shift+y", "url", "https://youtube.com"),
+            ]
+            .into(),
+        };
+
+        let spans = super::render_spans(&model);
+        let text: String = spans.iter().map(|(text, _)| text.as_str()).collect();
+        let lines: Vec<_> = text.lines().collect();
+        assert_eq!(lines[2], "KEY      TYPE  ACTION");
+        assert_eq!(lines[3], "t        app   Ghostty");
+        assert_eq!(lines[4], "shift+y  url   https://youtube.com");
+        assert!(
+            !text.ends_with('\n'),
+            "no trailing blank line to pad the window"
+        );
+        assert!(spans.contains(&("app   ".into(), super::Tint::App)));
+        assert!(spans.contains(&("url   ".into(), super::Tint::Url)));
     }
 
     #[test]

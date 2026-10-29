@@ -254,3 +254,44 @@ fn preview_chord_ignores_non_observable_inputs() {
         None
     );
 }
+
+fn engine_with(contents: &str) -> Engine {
+    Engine::new(Config::from_toml(contents).unwrap().compile().unwrap())
+}
+
+#[test]
+fn hyper_question_mark_requests_the_cheatsheet_and_swallows_the_key() {
+    let mut engine = engine();
+
+    engine.handle(press("caps_lock"));
+    assert_eq!(engine.handle(press("slash")), Decision::Suppress);
+    assert!(engine.cheatsheet_requested());
+    assert_eq!(engine.handle(release("slash")), Decision::Suppress);
+    assert!(!engine.cheatsheet_requested());
+    assert_eq!(engine.handle(release("caps_lock")), Decision::Suppress);
+}
+
+#[test]
+fn hyper_question_mark_defers_to_user_binding_but_ignores_hold_setting() {
+    let mut bound = engine_with(
+        r#"
+        [bindings]
+        "hyper+slash" = { app = "Raycast" }
+        "#,
+    );
+    bound.handle(press("caps_lock"));
+    assert_eq!(
+        bound.handle(press("slash")),
+        Decision::Trigger(launch("Raycast"))
+    );
+    assert!(!bound.cheatsheet_requested());
+
+    let mut hold_disabled = engine_with("[ui]\ncheatsheet = false\n");
+    hold_disabled.handle(press("caps_lock"));
+    assert_eq!(hold_disabled.handle(press("slash")), Decision::Suppress);
+    assert!(hold_disabled.cheatsheet_requested());
+
+    let mut plain = engine();
+    assert_eq!(plain.handle(press("slash")), Decision::Pass);
+    assert!(!plain.cheatsheet_requested());
+}
